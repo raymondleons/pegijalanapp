@@ -23,18 +23,20 @@ import { useAuth } from '../context/AuthContext';
 
 // Palet warna didefinisikan di sini agar sesuai dengan desain
 const COLORS = {
-    primary: '#ffde2f', // Kuning utama untuk header dan tombol
+    primary: '#ffde2f',
+    secondary: '#ffde2f', // Ditambahkan untuk konsistensi
     white: '#FFFFFF',
     black: '#000000',
-    lightGray: '#F8F9FA', // Warna latar belakang layar
-    gray: '#E0E0E0',     // Warna border input
-    darkGray: '#A0A0A0', // Warna placeholder dan ikon
+    lightGray: '#F8F9FA',
+    gray: '#E0E0E0',
+    darkGray: '#A0A0A0',
 };
 
 // Definisi font
 const FONTS = {
-    h3: { fontSize: 18 },
+    h3: { fontSize: 18, fontWeight: '600' },
     body3: { fontSize: 16 },
+    body4: { fontSize: 14 },
 };
 
 // Data negara diperbarui menjadi array of objects
@@ -44,12 +46,7 @@ const ALL_COUNTRIES = [
     { name: 'Malaysia', code: 'MY', flag: '🇲🇾', phoneCode: '+60' },
     { name: 'Thailand', code: 'TH', flag: '🇹🇭', phoneCode: '+66' },
     { name: 'Vietnam', code: 'VN', flag: '🇻🇳', phoneCode: '+84' },
-    { name: 'Myanmar', code: 'MM', flag: '🇲🇲', phoneCode: '+95' },
-    { name: 'Cambodia', code: 'KH', flag: '🇰🇭', phoneCode: '+855' },
-    { name: 'Laos', code: 'LA', flag: '🇱🇦', phoneCode: '+856' },
-    { name: 'Brunei Darussalam', code: 'BN', flag: '🇧🇳', phoneCode: '+673' },
 ];
-
 
 const RegisterScreen = () => {
     const navigation = useNavigation();
@@ -87,7 +84,6 @@ const RegisterScreen = () => {
             setFilteredCountries(filtered);
         }
     }, [searchQuery, showCountryCodeModal]);
-
 
     const handleSignUp = async () => {
         if (!firstName || !email || !password || !confirmPassword || !phoneNumber) {
@@ -131,12 +127,19 @@ const RegisterScreen = () => {
 
     return (
         <SafeAreaView style={styles.safeArea}>
-            <StatusBar barStyle="dark-content" backgroundColor={COLORS.primary} />
-            <View style={[styles.header, { paddingTop: insets.top }]}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                    <Image source={require('../assets/icons/chevron_left.png')} style={styles.backIcon} />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Daftar</Text>
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.secondary} />
+            
+            {/* Header dengan style yang disesuaikan */}
+            <View style={[styles.header, { paddingTop: insets.top + 10, paddingBottom: 15 }]}>
+                <View style={styles.headerSide}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                        <Image source={require('../assets/icons/chevron_left.png')} style={styles.backIcon} />
+                    </TouchableOpacity>
+                </View>
+                <View style={styles.headerCenter}>
+                    <Text style={styles.headerTitle}>Daftar</Text>
+                </View>
+                <View style={styles.headerSide} />
             </View>
 
             <KeyboardAvoidingView
@@ -226,7 +229,6 @@ const RegisterScreen = () => {
                         </View>
                     </View>
 
-                    {/* Tombol dipindahkan ke dalam ScrollView */}
                     <View style={styles.bottomContainer}>
                         <TouchableOpacity style={styles.signUpButton} onPress={handleSignUp} disabled={isLoading}>
                             {isLoading ? (
@@ -239,7 +241,7 @@ const RegisterScreen = () => {
                 </ScrollView>
             </KeyboardAvoidingView>
             
-            {/* ... (Kode Modal tidak berubah) ... */}
+            {/* Modal untuk memilih negara */}
             <Modal
                 animationType="slide"
                 transparent={true}
@@ -284,6 +286,8 @@ const RegisterScreen = () => {
                     </Pressable>
                 </Pressable>
             </Modal>
+
+            {/* Modal untuk memilih kode negara */}
             <Modal
                 animationType="slide"
                 transparent={true}
@@ -337,15 +341,28 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: COLORS.lightGray,
     },
+    // Header style yang disesuaikan
     header: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingBottom: 10,
-        backgroundColor: COLORS.primary,
+        backgroundColor: COLORS.secondary,
+        elevation: 5,
+        shadowColor: '#555555',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 10,
+    },
+    headerSide: {
+        flex: 1,
+    },
+    headerCenter: {
+        flex: 2,
+        alignItems: 'center',
     },
     backButton: {
-        padding: 5,
+        alignSelf: 'flex-start',
+        padding: 8,
     },
     backIcon: {
         width: 18,
@@ -355,8 +372,6 @@ const styles = StyleSheet.create({
     headerTitle: {
         ...FONTS.h3,
         color: COLORS.black,
-        marginLeft: 16,
-        fontWeight: '600',
     },
     scrollContainer: {
         flexGrow: 1,
@@ -367,11 +382,11 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         margin: 16,
         padding: 20,
-        elevation: 3,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
+        elevation: 5,
+        shadowColor: '#555555',
+        shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.1,
-        shadowRadius: 5,
+        shadowRadius: 10,
     },
     input: {
         height: 55,
@@ -383,7 +398,7 @@ const styles = StyleSheet.create({
         backgroundColor: COLORS.white,
         marginBottom: 15,
         justifyContent: 'center',
-        color: COLORS.black, // Tambahkan ini untuk memastikan teks terlihat
+        color: COLORS.black,
     },
     phoneInputContainer: {
         flexDirection: 'row',
@@ -411,7 +426,7 @@ const styles = StyleSheet.create({
         height: '100%',
         paddingHorizontal: 15,
         ...FONTS.body3,
-        color: COLORS.black, // Tambahkan ini
+        color: COLORS.black,
     },
     passwordInputContainer: {
         flexDirection: 'row',
@@ -428,20 +443,11 @@ const styles = StyleSheet.create({
         flex: 1,
         height: '100%',
         ...FONTS.body3,
-        color: COLORS.black, // Tambahkan ini
+        color: COLORS.black,
     },
     eyeIcon: {
         width: 24,
         height: 24,
-        tintColor: COLORS.darkGray,
-    },
-    countryText: {
-        ...FONTS.body3,
-        color: COLORS.black,
-    },
-    dropdownIcon: {
-        width: 18,
-        height: 18,
         tintColor: COLORS.darkGray,
     },
     outlinedInputContainer: {
@@ -468,6 +474,15 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 15,
     },
+    countryText: {
+        ...FONTS.body3,
+        color: COLORS.black,
+    },
+    dropdownIcon: {
+        width: 18,
+        height: 18,
+        tintColor: COLORS.darkGray,
+    },
     bottomContainer: {
         padding: 20,
         backgroundColor: COLORS.lightGray,
@@ -482,7 +497,7 @@ const styles = StyleSheet.create({
     },
     signUpButtonText: {
         color: COLORS.black,
-        fontSize: 16,
+        ...FONTS.body3,
         fontWeight: 'normal',
     },
     // Styles untuk Modal
@@ -530,7 +545,7 @@ const styles = StyleSheet.create({
         flex: 1,
         height: 50,
         ...FONTS.body3,
-        color: COLORS.black, // Tambahkan ini
+        color: COLORS.black,
     },
     modalItem: {
         flexDirection: 'row',
