@@ -23,7 +23,7 @@ import { useAuth } from '../context/AuthContext';
 
 // Palet warna didefinisikan di sini agar sesuai dengan desain
 const COLORS = {
-    primary: '#FFD60A', // Kuning utama untuk header dan tombol
+    primary: '#ffde2f', // Kuning utama untuk header dan tombol
     white: '#FFFFFF',
     black: '#000000',
     lightGray: '#F8F9FA', // Warna latar belakang layar

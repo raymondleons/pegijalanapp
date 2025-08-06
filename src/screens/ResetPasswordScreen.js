@@ -21,7 +21,8 @@ import { useAuth } from '../context/AuthContext';
 
 // Palet warna dan font (diasumsikan dari file lain)
 const COLORS = {
-    primary: '#FFD60A',
+    primary: '#ffde2f',
+    secondary: '#ffde2f', // Ditambahkan untuk konsistensi
     white: '#FFFFFF',
     black: '#000000',
     lightGray: '#F8F9FA',
@@ -31,7 +32,7 @@ const COLORS = {
 };
 
 const FONTS = {
-    h3: { fontSize: 18 },
+    h3: { fontSize: 18, fontWeight: '600' },
     body3: { fontSize: 16 },
     body4: { fontSize: 14 },
 };
@@ -78,7 +79,7 @@ const ResetPasswordScreen = () => {
     const navigation = useNavigation();
     const route = useRoute();
     const insets = useSafeAreaInsets();
-    const { resetPassword } = useAuth(); // Gunakan dari context
+    const { resetPassword } = useAuth();
 
     const email = route.params?.email || '';
     const [otp, setOtp] = useState('');
@@ -111,7 +112,7 @@ const ResetPasswordScreen = () => {
             setToastVisible(true);
             setTimeout(() => {
                 navigation.navigate('Login');
-            }, 1500); // Tunggu 1.5 detik sebelum navigasi
+            }, 1500);
         } else {
             Alert.alert('Gagal', result.message);
         }
@@ -119,12 +120,19 @@ const ResetPasswordScreen = () => {
 
     return (
         <SafeAreaView style={styles.safeArea}>
-            <StatusBar barStyle="dark-content" backgroundColor={COLORS.primary} />
-            <View style={[styles.header, { paddingTop: insets.top }]}>
-                <TouchableOpacity onPress={() => navigation.navigate('Login')} style={styles.backButton}>
-                    <Image source={require('../assets/icons/chevron_left.png')} style={styles.backIcon} />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Atur Ulang Kata Sandi</Text>
+            <StatusBar barStyle="dark-content" backgroundColor={COLORS.secondary} />
+            
+            {/* Header dengan style yang disesuaikan */}
+            <View style={[styles.header, { paddingTop: insets.top + 10, paddingBottom: 15 }]}>
+                <View style={styles.headerSide}>
+                    <TouchableOpacity onPress={() => navigation.navigate('Login')} style={styles.backButton}>
+                        <Image source={require('../assets/icons/chevron_left.png')} style={styles.backIcon} />
+                    </TouchableOpacity>
+                </View>
+                <View style={styles.headerCenter}>
+                    <Text style={styles.headerTitle}>Atur Ulang Kata Sandi</Text>
+                </View>
+                <View style={styles.headerSide} />
             </View>
 
             <KeyboardAvoidingView
@@ -190,15 +198,28 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: COLORS.lightGray,
     },
+    // Header style yang disesuaikan
     header: {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingBottom: 10,
-        backgroundColor: COLORS.primary,
+        backgroundColor: COLORS.secondary,
+        elevation: 5,
+        shadowColor: '#555555',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 10,
+    },
+    headerSide: {
+        flex: 1,
+    },
+    headerCenter: {
+        flex: 2,
+        alignItems: 'center',
     },
     backButton: {
-        padding: 5,
+        alignSelf: 'flex-start',
+        padding: 8,
     },
     backIcon: {
         width: 18,
@@ -208,8 +229,6 @@ const styles = StyleSheet.create({
     headerTitle: {
         ...FONTS.h3,
         color: COLORS.black,
-        marginLeft: 16,
-        fontWeight: '600',
     },
     scrollContainer: {
         flexGrow: 1,
@@ -221,6 +240,11 @@ const styles = StyleSheet.create({
         margin: 16,
         padding: 20,
         alignItems: 'center',
+        elevation: 5,
+        shadowColor: '#555555',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.1,
+        shadowRadius: 10,
     },
     infoSubtitle: {
         ...FONTS.body4,
@@ -253,40 +277,41 @@ const styles = StyleSheet.create({
     },
     buttonText: {
         color: COLORS.black,
-        fontSize: 16,
+        ...FONTS.body3,
         fontWeight: 'normal',
     },
     // Styles untuk Toast
     toastContainer: {
         position: 'absolute',
-        top: 60,
-        left: 20,
-        right: 20,
+        bottom: 30,
+        left: 0,
+        right: 0,
         alignItems: 'center',
-        zIndex: 1000,
     },
     toastContent: {
         backgroundColor: COLORS.success,
         paddingHorizontal: 20,
         paddingVertical: 12,
-        borderRadius: 25,
+        borderRadius: 20,
         flexDirection: 'row',
         alignItems: 'center',
-        elevation: 5,
+        justifyContent: 'center',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.25,
         shadowRadius: 3.84,
+        elevation: 5,
+    },
+    toastText: {
+        color: COLORS.white,
+        fontSize: 14,
+        fontWeight: '600',
+        marginLeft: 10,
     },
     toastIcon: {
         width: 20,
         height: 20,
         tintColor: COLORS.white,
-        marginRight: 10,
-    },
-    toastText: {
-        color: COLORS.white,
-        fontWeight: '600',
     },
 });
 
