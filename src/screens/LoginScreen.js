@@ -245,7 +245,7 @@ const LoginScreen = () => {
                         <View style={styles.promptContainer}>
                             <Text style={styles.promptText}>
                                 {translate('dont_have_account')}
-                                <Text style={styles.promptLink} onPress={() => navigation.navigate('SignUp')}>
+                                <Text style={styles.promptLink} onPress={() => navigation.navigate('Register')}>
                                     {' '}{translate('signup')}
                                 </Text>
                             </Text>
