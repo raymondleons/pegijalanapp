@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "156350074857",
+    "project_id": "owntalk",
+    "storage_bucket": "owntalk.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:156350074857:android:6f765f83731a1546264578",
+        "android_client_info": {
+          "package_name": "com.pegijalanapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "156350074857-hdj3o5a7q74n0n1pls3ust3tl9vhbig6.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.pegijalanapp",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "156350074857-cejo6oec6uta70o0ca4isabvshaaek9j.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD6ZiqoBJU9ccJ-U23BK7zqxa_7FWPy-84"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "156350074857-5m6nmfr6nur2293o78qjb73knq9alb0b.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
