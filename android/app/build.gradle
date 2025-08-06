@@ -85,6 +85,9 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        manifestPlaceholders = [
+            appAuthRedirectScheme: 'com.pegijalanapp' // Pakai nama package aplikasi Anda
+        ]
     }
     signingConfigs {
         debug {
@@ -111,8 +114,6 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
-    implementation 'com.facebook.android:facebook-android-sdk:latest.release'
-    implementation project(':react-native-fbsdk-next')
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
