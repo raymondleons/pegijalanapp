@@ -277,6 +277,7 @@ const styles = StyleSheet.create({
   },
   promptTitle: {
     ...FONTS.h4,
+    color: COLORS.text_dark,
     fontWeight: '600',
   },
   promptDesc: {
