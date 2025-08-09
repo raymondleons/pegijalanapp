@@ -103,12 +103,14 @@ const RegisterScreen = () => {
 
         const fullName = `${firstName} ${lastName}`.trim();
         const userData = {
-            name: fullName,
+    // Ganti 'name' menjadi 'first_name' dan 'last_name'
+            first_name: firstName,
+            last_name: lastName, // Pastikan lastName diisi
             email,
             password,
             citizenship: country.name,
-            phoneCode: countryCode.phoneCode,
-            phoneNumber: phoneNumber,
+            phone_code: countryCode.phoneCode,
+            phone_number: phoneNumber,
         };
 
         const result = await register(userData);
