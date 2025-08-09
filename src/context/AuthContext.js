@@ -2,249 +2,246 @@ import React, { createContext, useState, useContext, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 
-const API_URL = 'https://tiket.crelixdigital.com/api'; 
+const API_URL = 'https://tiket.crelixdigital.com/api';
+
+// Membuat instance axios terpusat yang akan digunakan di seluruh aplikasi
+const axiosInstance = axios.create({
+    baseURL: API_URL,
+    headers: { 'Content-Type': 'application/json' },
+});
 
 export const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-    const [userToken, setUserToken] = useState(null);
-    const [userInfo, setUserInfo] = useState(null);
+    const [authState, setAuthState] = useState({
+        accessToken: null,
+        refreshToken: null,
+        authenticated: false,
+        user: null,
+    });
     const [isLoading, setIsLoading] = useState(true);
 
-    const setAuthData = async (token, userData) => {
-        try {
-            setUserToken(token);
-            setUserInfo(userData);
-            await AsyncStorage.setItem('userToken', token);
-            await AsyncStorage.setItem('userInfo', JSON.stringify(userData));
-        } catch (error) {
-            console.error("Gagal menyimpan data otentikasi:", error);
-        }
-    };
+    // --- Efek untuk memuat dan memvalidasi sesi saat aplikasi dimulai ---
+    useEffect(() => {
+        const loadAuthState = async () => {
+            try {
+                const accessToken = await AsyncStorage.getItem('accessToken');
+                const refreshToken = await AsyncStorage.getItem('refreshToken');
 
-    const refreshUserInfo = async () => {
-        const token = await AsyncStorage.getItem('userToken');
-        if (!token) return { success: false };
+                if (!accessToken || !refreshToken) {
+                    setIsLoading(false);
+                    return;
+                }
 
-        try {
-            const response = await axios.get(`${API_URL}/auth/profile`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            const newUserData = response.data.user;
-            
-            setUserInfo(newUserData);
-            await AsyncStorage.setItem('userInfo', JSON.stringify(newUserData));
-            
-            return { success: true };
-        } catch (error) {
-            console.error("Gagal me-refresh info pengguna:", error);
-            if (error.response?.status === 401) {
-                logout();
+                axiosInstance.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
+
+                // Langsung validasi ke server dengan memanggil /users/me
+                const response = await axiosInstance.get('/users/me');
+                const user = response.data;
+                
+                // Jika berhasil, user valid. Simpan datanya.
+                setAuthState({
+                    accessToken,
+                    refreshToken,
+                    authenticated: true,
+                    user: user
+                });
+                await AsyncStorage.setItem('userInfo', JSON.stringify(user));
+
+            } catch (error) {
+                // JIKA GAGAL (misal, 401 karena user dihapus), bersihkan token lama.
+                console.log("Validasi sesi saat startup gagal. Pengguna akan di-logout.", error.message);
+                await AsyncStorage.multiRemove(['accessToken', 'refreshToken', 'userInfo']);
+                setAuthState({ accessToken: null, refreshToken: null, authenticated: false, user: null });
+            } finally {
+                setIsLoading(false);
             }
-            return { success: false };
-        }
-    };
+        };
 
-    const updateProfile = async (userId, updatedData) => {
-        if (!userToken) {
-            return { success: false, message: 'Tidak terautentikasi.' };
-        }
-        try {
-            const response = await axios.put(`${API_URL}/users/${userId}`, updatedData, {
-                headers: { Authorization: `Bearer ${userToken}` }
-            });
+        loadAuthState();
+    }, []);
 
-            const newUserData = response.data.user;
-            
-            setUserInfo(newUserData);
-            await AsyncStorage.setItem('userInfo', JSON.stringify(newUserData));
-            
-            return { success: true, user: newUserData };
-        } catch (error) {
-            const message = error.response?.data?.message || "Gagal memperbarui profil.";
-            return { success: false, message: message };
-        }
-    };
+    // --- Interceptor untuk refresh token otomatis saat aplikasi berjalan ---
+    useEffect(() => {
+        const responseInterceptor = axiosInstance.interceptors.response.use(
+            response => response,
+            async (error) => {
+                const originalRequest = error.config;
+                if (error.response?.status === 401 && !originalRequest._retry) {
+                    originalRequest._retry = true;
+                    try {
+                        const storedRefreshToken = await AsyncStorage.getItem('refreshToken');
+                        if (!storedRefreshToken) return Promise.reject(error);
 
-    const login = async (usernameOrEmail, password) => {
-        try {
-            const isEmail = usernameOrEmail.includes('@');
-            const payload = {
-                password: password,
-                [isEmail ? 'email' : 'username']: usernameOrEmail
-            };
+                        const rs = await axios.post(`${API_URL}/auth/refresh-token`, { token: storedRefreshToken });
+                        const { accessToken } = rs.data;
+                        
+                        await AsyncStorage.setItem('accessToken', accessToken);
+                        axiosInstance.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
+                        originalRequest.headers['Authorization'] = `Bearer ${accessToken}`;
+                        setAuthState(prev => ({ ...prev, accessToken }));
 
-            const response = await axios.post(`${API_URL}/auth/login`, payload);
-            const responseData = response.data;
-            
-            if (!responseData.token || !responseData.user) {
-                throw new Error("Respons dari server tidak lengkap setelah login.");
+                        return axiosInstance(originalRequest);
+                    } catch (_error) {
+                        await logout();
+                        return Promise.reject(_error);
+                    }
+                }
+                return Promise.reject(error);
             }
+        );
+        return () => axiosInstance.interceptors.response.eject(responseInterceptor);
+    }, []);
 
-            await setAuthData(responseData.token, responseData.user);
-            return { success: true };
-        } catch (error) {
-            const message = error.response?.data?.message || error.message;
-            return { success: false, message: message };
-        }
-    };
-    
-    const loginWithGoogle = async (idToken) => {
-        try {
-            const response = await axios.post(`${API_URL}/auth/google/verify-token`, {
-                token: idToken,
-            });
+    // --- Helper function untuk mengatur sesi setelah login/verifikasi ---
+    const setAuthSession = async (data) => {
+        const { accessToken, refreshToken } = data;
+        
+        axiosInstance.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
+        const profileResponse = await axiosInstance.get('/users/me');
+        const user = profileResponse.data;
 
-            const responseData = response.data;
-
-            if (!responseData.token || !responseData.user) {
-                throw new Error("Respons dari server tidak lengkap setelah login Google.");
-            }
-
-            await setAuthData(responseData.token, responseData.user);
-            return { success: true };
-        } catch (error) {
-            const message = error.response?.data?.message || "Terjadi kesalahan saat verifikasi dengan server.";
-            return { success: false, message: message };
-        }
+        await AsyncStorage.setItem('accessToken', accessToken);
+        await AsyncStorage.setItem('refreshToken', refreshToken);
+        await AsyncStorage.setItem('userInfo', JSON.stringify(user));
+        
+        setAuthState({ accessToken, refreshToken, authenticated: true, user });
     };
 
-    const loginWithFacebook = async (accessToken) => {
-        try {
-            const response = await axios.post(`${API_URL}/auth/facebook/verify-token`, {
-                token: accessToken,
-            });
-            const responseData = response.data;
-            if (!responseData.token || !responseData.user) {
-                throw new Error("Respons dari server tidak lengkap setelah login Facebook.");
-            }
-            await setAuthData(responseData.token, responseData.user);
-            return { success: true };
-        } catch (error) {
-            const message = error.response?.data?.message || "Terjadi kesalahan saat verifikasi dengan server.";
-            console.error("Login Facebook gagal:", message);
-            return { success: false, message: message };
-        }
-    };
-
-    const loginWithMicrosoft = async (accessToken) => {
-        try {
-            const response = await axios.post(`${API_URL}/auth/microsoft/verify-token`, {
-                token: accessToken,
-            });
-            const responseData = response.data;
-            if (!responseData.token || !responseData.user) {
-                throw new Error("Respons dari server tidak lengkap setelah login Microsoft.");
-            }
-            await setAuthData(responseData.token, responseData.user);
-            return { success: true };
-        } catch (error) {
-            const message = error.response?.data?.message || "Terjadi kesalahan saat verifikasi dengan server.";
-            console.error("Login Microsoft gagal:", message);
-            return { success: false, message: message };
-        }
-    };
+    // --- Fungsi-fungsi otentikasi ---
 
     const register = async (userData) => {
         try {
-            const response = await axios.post(`${API_URL}/auth/register`, userData);
+            const response = await axiosInstance.post('/auth/register', userData);
             return { success: true, data: response.data };
         } catch (error) {
-            const message = error.response?.data?.message || "Terjadi kesalahan saat pendaftaran.";
-            return { success: false, message: message };
+            const message = error.response?.data?.message || "Pendaftaran gagal.";
+            return { success: false, message };
         }
     };
 
     const verifyOtp = async (email, otp) => {
         try {
-            const response = await axios.post(`${API_URL}/auth/verify-email`, { email, otp });
-            const responseData = response.data;
-
-            if (!responseData.token || !responseData.user) {
-                throw new Error("Respons dari server tidak lengkap setelah verifikasi.");
-            }
-            
-            await setAuthData(responseData.token, responseData.user);
-            
+            const response = await axiosInstance.post('/auth/verify', { email, otp });
+            await setAuthSession(response.data);
             return { success: true };
         } catch (error) {
-            const message = error.response?.data?.message || "Terjadi kesalahan saat verifikasi OTP.";
-            return { success: false, message: message };
+            const message = error.response?.data?.message || "Verifikasi OTP gagal.";
+            return { success: false, message };
         }
     };
 
     const resendOtp = async (email) => {
         try {
-            await axios.post(`${API_URL}/auth/resend-otp`, { email });
-            return { success: true };
-        } catch (error) {
-            const message = error.response?.data?.message || "Gagal mengirim ulang OTP.";
-            return { success: false, message: message };
-        }
-    };
-
-    const forgotPassword = async (email) => {
-        try {
-            const response = await axios.post(`${API_URL}/auth/forgot-password`, { email });
+            const response = await axiosInstance.post('/auth/resend-otp', { email });
             return { success: true, message: response.data.message };
         } catch (error) {
-            const message = error.response?.data?.message || "Gagal mengirim permintaan reset.";
-            return { success: false, message: message };
+            const message = error.response?.data?.message || "Gagal mengirim ulang OTP.";
+            return { success: false, message };
+        }
+    };
+    
+    const login = async (email, password) => {
+        try {
+            const response = await axiosInstance.post('/auth/login', { email, password });
+            await setAuthSession(response.data);
+            return { success: true };
+        } catch (error) {
+            const message = error.response?.data?.message || "Login gagal.";
+            return { success: false, message };
+        }
+    };
+    
+    const socialLogin = async (provider, providerToken) => {
+        try {
+            const response = await axiosInstance.post(`/auth/${provider}/signin`, { token: providerToken });
+            await setAuthSession(response.data);
+            return { success: true };
+        } catch (error) {
+            const message = error.response?.data?.message || `Login dengan ${provider} gagal.`;
+            return { success: false, message };
         }
     };
 
-    const resetPassword = async (email, otp, password) => {
+    const loginWithGoogle = (idToken) => socialLogin('google', idToken);
+    const loginWithFacebook = (fbToken) => socialLogin('facebook', fbToken);
+    const loginWithMicrosoft = (msToken) => socialLogin('microsoft', msToken);
+    
+    const forgotPassword = async (email) => {
         try {
-            const response = await axios.post(`${API_URL}/auth/reset-password`, { email, otp, password });
+            const response = await axiosInstance.post('/auth/forgot-password', { email });
+            return { success: true, message: response.data.message };
+        } catch (error) {
+            const message = error.response?.data?.message || "Permintaan reset gagal.";
+            return { success: false, message };
+        }
+    };
+    
+    const resetPassword = async (token, password) => {
+        try {
+            const response = await axiosInstance.post(`/auth/reset-password/${token}`, { password });
             return { success: true, message: response.data.message };
         } catch (error) {
             const message = error.response?.data?.message || "Gagal mereset kata sandi.";
-            return { success: false, message: message };
+            return { success: false, message };
+        }
+    };
+
+    const changePassword = async (currentPassword, newPassword) => {
+        try {
+            const response = await axiosInstance.put('/users/change-password', { currentPassword, newPassword });
+            return { success: true, message: response.data.message };
+        } catch (error) {
+            const message = error.response?.data?.message || "Gagal mengubah kata sandi.";
+            return { success: false, message };
+        }
+    };
+
+    const updateProfile = async (updatedData) => {
+        try {
+            const response = await axiosInstance.put('/users/me', updatedData);
+            const updatedUser = response.data;
+            
+            setAuthState(prev => ({ ...prev, user: updatedUser }));
+            await AsyncStorage.setItem('userInfo', JSON.stringify(updatedUser));
+            
+            return { success: true, message: "Profil berhasil diperbarui." };
+        } catch (error) {
+            const message = error.response?.data?.message || "Gagal memperbarui profil.";
+            return { success: false, message };
         }
     };
 
     const logout = async () => {
-        setUserToken(null);
-        setUserInfo(null);
-        await AsyncStorage.multiRemove(['userToken', 'userInfo']);
-    };
-
-    const isLoggedIn = async () => {
         try {
-            const token = await AsyncStorage.getItem('userToken');
-            const infoString = await AsyncStorage.getItem('userInfo');
-            
-            if (token && infoString) {
-                setUserToken(token);
-                setUserInfo(JSON.parse(infoString));
+            const storedRefreshToken = await AsyncStorage.getItem('refreshToken');
+            if (storedRefreshToken) {
+                await axiosInstance.post('/auth/logout', { token: storedRefreshToken });
             }
-        } catch (e) {
-            console.error("Gagal memeriksa status login dari storage:", e);
+        } catch (error) {
+            console.error("API Logout gagal, melanjutkan logout di sisi klien.", error);
         } finally {
-            setIsLoading(false);
+            await AsyncStorage.multiRemove(['accessToken', 'refreshToken', 'userInfo']);
+            delete axiosInstance.defaults.headers.common['Authorization'];
+            setAuthState({ accessToken: null, refreshToken: null, authenticated: false, user: null });
         }
     };
 
-    useEffect(() => {
-        isLoggedIn();
-    }, []);
-
     const value = {
-        userToken,
-        userInfo,
+        ...authState,
         isLoading,
+        register,
+        verifyOtp,
+        resendOtp,
         login,
         loginWithGoogle,
         loginWithFacebook,
         loginWithMicrosoft,
-        register,
-        verifyOtp,
-        resendOtp,
-        updateProfile,
-        refreshUserInfo,
-        logout,
         forgotPassword,
         resetPassword,
+        changePassword,
+        updateProfile,
+        logout,
     };
 
     return (
