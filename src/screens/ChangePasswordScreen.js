@@ -57,7 +57,8 @@ const ChangePasswordScreen = () => {
     const navigation = useNavigation();
     const { t } = useLocalization() || {};
     const insets = useSafeAreaInsets();
-    const { updateUserPassword } = useAuth(); 
+    // Panggil 'changePassword' dari context
+    const { changePassword } = useAuth(); 
 
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
@@ -76,7 +77,6 @@ const ChangePasswordScreen = () => {
     };
 
     const handleUpdate = async () => {
-        // Meskipun backend tidak memvalidasi currentPassword, validasi di frontend tetap baik
         if (!currentPassword || !newPassword || !confirmPassword) {
             showToast('Semua kolom harus diisi.');
             return;
@@ -92,18 +92,16 @@ const ChangePasswordScreen = () => {
 
         setIsLoading(true);
         try {
-            // Panggilan fungsi disesuaikan dengan backend, hanya mengirim kata sandi baru
-            await updateUserPassword(newPassword);
+            // Panggil fungsi context dengan parameter yang benar
+            const result = await changePassword(currentPassword, newPassword);
             
             setIsLoading(false);
-            showToast(t('password_update_success'), 'success');
+            showToast(result.message, 'success');
             
-            // Kembali ke halaman sebelumnya setelah 3 detik
-            setTimeout(() => navigation.goBack(), 3100);
+            setTimeout(() => navigation.goBack(), 2000);
 
         } catch (error) {
             setIsLoading(false);
-            // Menampilkan pesan error langsung dari backend
             showToast(error.message);
             console.error("Password Update Error:", error);
         }
@@ -181,126 +179,28 @@ const ChangePasswordScreen = () => {
 };
 
 const styles = StyleSheet.create({
-    safeArea: {
-        flex: 1,
-        backgroundColor: COLORS.secondary,
-    },
-    container: {
-        flex: 1,
-        backgroundColor: COLORS.background,
-        padding: SIZES.padding,
-    },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: SIZES.padding,
-        backgroundColor: COLORS.secondary,
-    },
-    headerSide: {
-        flex: 1,
-    },
-    headerCenter: {
-        flex: 3,
-        alignItems: 'center',
-    },
-    backButton: {
-        alignSelf: 'flex-start',
-        padding: SIZES.base,
-    },
-    backIcon: {
-        width: SIZES.h3,
-        height: SIZES.h3,
-        tintColor: COLORS.darkGray,
-    },
-    headerTitle: {
-        ...FONTS.h3,
-        color: COLORS.black,
-        fontWeight: '600',
-    },
-    menuCard: {
-        backgroundColor: COLORS.white,
-        borderRadius: SIZES.radius,
-        marginBottom: SIZES.padding,
-        overflow: 'hidden',
-    },
-    itemContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: SIZES.padding,
-        height: 55,
-    },
-    input: {
-        flex: 1,
-        height: '100%',
-        ...FONTS.body3,
-        color: COLORS.text_dark,
-    },
-    eyeIcon: {
-        width: SIZES.h2,
-        height: SIZES.h2,
-        tintColor: COLORS.gray,
-    },
-    divider: {
-        height: 1,
-        backgroundColor: COLORS.lightGray,
-        marginLeft: SIZES.padding,
-    },
-    bottomActionContainer: {
-        padding: SIZES.padding,
-        backgroundColor: COLORS.white,
-        borderTopWidth: 1,
-        borderTopColor: COLORS.border,
-    },
-    updateButton: {
-        backgroundColor: COLORS.secondary,
-        padding: SIZES.base * 1.5,
-        borderRadius: SIZES.radius * 0.5,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    disabledButton: {
-        opacity: 0.7,
-    },
-    updateButtonText: {
-        ...FONTS.h4,
-        color: COLORS.black,
-        fontWeight: 'bold',
-    },
-    toastContainer: {
-        position: 'absolute',
-        bottom: SIZES.padding * 5,
-        left: SIZES.padding,
-        right: SIZES.padding,
-        padding: SIZES.padding,
-        borderRadius: SIZES.radius,
-        elevation: 10,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-    },
-    toastSuccess: {
-        backgroundColor: '#D4EDDA',
-        borderColor: '#C3E6CB',
-        borderWidth: 1,
-    },
-    toastError: {
-        backgroundColor: '#F8D7DA',
-        borderColor: '#F5C6CB',
-        borderWidth: 1,
-    },
-    toastTextSuccess: {
-        color: '#155724',
-        ...FONTS.body4,
-        textAlign: 'center',
-        fontWeight: '600',
-    },
-    toastTextError: {
-        color: '#721C24',
-        ...FONTS.body4,
-        textAlign: 'center',
-        fontWeight: '600',
-    },
+    safeArea: { flex: 1, backgroundColor: COLORS.secondary, },
+    container: { flex: 1, backgroundColor: COLORS.background, padding: SIZES.padding, },
+    header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SIZES.padding, backgroundColor: COLORS.secondary, },
+    headerSide: { flex: 1, },
+    headerCenter: { flex: 3, alignItems: 'center', },
+    backButton: { alignSelf: 'flex-start', padding: SIZES.base, },
+    backIcon: { width: SIZES.h3, height: SIZES.h3, tintColor: COLORS.darkGray, },
+    headerTitle: { ...FONTS.h3, color: COLORS.black, fontWeight: '600', },
+    menuCard: { backgroundColor: COLORS.white, borderRadius: SIZES.radius, marginBottom: SIZES.padding, overflow: 'hidden', },
+    itemContainer: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SIZES.padding, height: 55, },
+    input: { flex: 1, height: '100%', ...FONTS.body3, color: COLORS.text_dark, },
+    eyeIcon: { width: SIZES.h2, height: SIZES.h2, tintColor: COLORS.gray, },
+    divider: { height: 1, backgroundColor: COLORS.lightGray, marginLeft: SIZES.padding, },
+    bottomActionContainer: { padding: SIZES.padding, backgroundColor: COLORS.white, borderTopWidth: 1, borderTopColor: COLORS.border, },
+    updateButton: { backgroundColor: COLORS.secondary, padding: SIZES.base * 1.5, borderRadius: SIZES.radius * 0.5, alignItems: 'center', justifyContent: 'center', },
+    disabledButton: { opacity: 0.7, },
+    updateButtonText: { ...FONTS.h4, color: COLORS.black, fontWeight: 'bold', },
+    toastContainer: { position: 'absolute', bottom: SIZES.padding * 5, left: SIZES.padding, right: SIZES.padding, padding: SIZES.padding, borderRadius: SIZES.radius, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4, },
+    toastSuccess: { backgroundColor: '#D4EDDA', borderColor: '#C3E6CB', borderWidth: 1, },
+    toastError: { backgroundColor: '#F8D7DA', borderColor: '#F5C6CB', borderWidth: 1, },
+    toastTextSuccess: { color: '#155724', ...FONTS.body4, textAlign: 'center', fontWeight: '600', },
+    toastTextError: { color: '#721C24', ...FONTS.body4, textAlign: 'center', fontWeight: '600', },
 });
 
 export default ChangePasswordScreen;
