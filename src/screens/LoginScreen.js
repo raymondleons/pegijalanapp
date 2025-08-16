@@ -13,10 +13,11 @@ import {
     StatusBar,
     Alert,
     ActivityIndicator,
+    Modal,
     Animated
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { useLocalization } from '../context/LocalizationContext';
 import appTheme, { SIZES, FONTS } from '../constants/theme';
@@ -31,28 +32,19 @@ const MICROSOFT_CLIENT_ID = 'ID_KLIEN_MICROSOFT_ANDA';
 
 const LoginScreen = () => {
     const navigation = useNavigation();
-    const { login: contextLogin, loginWithGoogle, loginWithFacebook, loginWithMicrosoft } = useAuth();
+    const route = useRoute();
+    const { login: contextLogin, loginWithGoogle: contextLoginWithGoogle, loginWithFacebook: contextLoginWithFacebook, loginWithMicrosoft: contextLoginWithMicrosoft } = useAuth();
     const { t } = useLocalization() || {};
     const insets = useSafeAreaInsets();
-    
-    // DIPERBAIKI: Menambahkan tanda '=' yang hilang
     const [loginInput, setLoginInput] = useState('');
-    
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [isGoogleLoading, setGoogleLoading] = useState(false);
     const [isFacebookLoading, setFacebookLoading] = useState(false);
     const [isMicrosoftLoading, setMicrosoftLoading] = useState(false);
-
-    // State untuk Success Toast
     const [toastVisible, setToastVisible] = useState(false);
     const toastOpacity = useRef(new Animated.Value(0)).current;
-
-    // State untuk Error Toast
-    const [errorToastVisible, setErrorToastVisible] = useState(false);
-    const [errorToastMessage, setErrorToastMessage] = useState('');
-    const errorToastOpacity = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
         GoogleSignin.configure({
@@ -62,30 +54,56 @@ const LoginScreen = () => {
         });
     }, []);
 
-    const showSuccessToast = () => {
+    const showToast = () => {
         setToastVisible(true);
-        Animated.timing(toastOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-        setTimeout(() => hideSuccessToast(), 2000);
+        Animated.timing(toastOpacity, {
+            toValue: 1,
+            duration: 300,
+            useNativeDriver: true,
+        }).start();
+
+        setTimeout(() => {
+            hideToast();
+        }, 2000);
     };
 
-    const hideSuccessToast = () => {
-        Animated.timing(toastOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => setToastVisible(false));
+    const hideToast = () => {
+        Animated.timing(toastOpacity, {
+            toValue: 0,
+            duration: 300,
+            useNativeDriver: true,
+        }).start(() => {
+            setToastVisible(false);
+        });
     };
 
-    const showErrorToast = (message) => {
-        setErrorToastMessage(message);
-        setErrorToastVisible(true);
-        Animated.timing(errorToastOpacity, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-        setTimeout(() => hideErrorToast(), 3000);
-    };
+    const showSuccessAndNavigate = () => {
+        showToast();
+        const { redirect } = route.params || {};
 
-    const hideErrorToast = () => {
-        Animated.timing(errorToastOpacity, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => setErrorToastVisible(false));
+        setTimeout(() => {
+            if (redirect && redirect.screen) {
+                // Menggunakan navigation.reset untuk membangun tumpukan navigasi yang benar
+                navigation.reset({
+                    index: 1,
+                    routes: [
+                        { name: 'Main' },
+                        { name: redirect.screen, params: redirect.params },
+                    ],
+                });
+            } else {
+                // Logika default jika tidak ada pengalihan
+                navigation.reset({
+                    index: 0,
+                    routes: [{ name: 'Main' }],
+                });
+            }
+        }, 1500);
     };
 
     const handleLogin = async () => {
         if (!loginInput || !password) {
-            showErrorToast("Email dan password tidak boleh kosong.");
+            Alert.alert("Error", "Email/Username dan password tidak boleh kosong.");
             return;
         }
         setIsLoading(true);
@@ -94,27 +112,65 @@ const LoginScreen = () => {
         if (result && result.success) {
             showSuccessAndNavigate();
         } else if (result && !result.success) {
-            showErrorToast(result.message);
+            Alert.alert("Login Gagal", result.message);
         }
     };
 
+    // ✅ PERBAIKAN: Mengembalikan logika handleGoogleSignIn ke versi Anda yang sudah benar
     const handleGoogleSignIn = async () => {
         setGoogleLoading(true);
         try {
             await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
-            const { idToken } = await GoogleSignin.signIn();
-            if (!idToken) throw new Error("Gagal mendapatkan ID Token dari Google.");
+            
+            const result = await GoogleSignin.signIn();
+            console.log("Complete Google Response:", result);
+            
+            // Menggunakan struktur yang Anda berikan, karena ini yang sesuai untuk setup Anda
+            if (!result || !result.data) {
+                throw new Error("Format respons Google tidak valid");
+            }
 
-            const loginResult = await loginWithGoogle(idToken);
+            const userInfo = {
+                idToken: result.data.idToken,
+                user: {
+                    name: result.data.user?.name || 'Tidak tersedia',
+                    email: result.data.user?.email || 'Tidak tersedia',
+                    id: result.data.user?.id || 'Tidak tersedia'
+                }
+            };
+
+            if (!userInfo.idToken) {
+                throw new Error("Gagal mendapatkan ID Token dari Google. Respons tidak valid.");
+            }
+
+            const loginResult = await contextLoginWithGoogle(userInfo.idToken);
+            
             if (loginResult && loginResult.success) {
                 showSuccessAndNavigate();
             } else if (loginResult && !loginResult.success) {
-                showErrorToast(loginResult.message);
+                Alert.alert("Login Google Gagal", loginResult.message);
             }
+
         } catch (error) {
-            if (error.code !== statusCodes.SIGN_IN_CANCELLED) {
-                console.error("Google Sign-In Error:", error);
-                showErrorToast(error.message || `Terjadi kesalahan (Kode: ${error.code})`);
+            console.error("Google Sign-In Error Details:", {
+                code: error.code,
+                message: error.message,
+                stack: error.stack
+            });
+            
+            if (error.code === statusCodes.SIGN_IN_CANCELLED) {
+                console.log('User cancelled the login flow');
+            } else if (error.code === statusCodes.IN_PROGRESS) {
+                Alert.alert("Info", "Operasi sign-in sudah dalam proses");
+            } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+                Alert.alert("Error", "Google Play Services tidak tersedia atau kedaluwarsa");
+            } else {
+                Alert.alert(
+                    "Error Google Sign-In", 
+                    error.message || 
+                    `Terjadi kesalahan.\nKode: ${error.code || 'N/A'}\n` +
+                    `Detail: ${JSON.stringify(error, null, 2)}`
+                );
             }
         } finally {
             setGoogleLoading(false);
@@ -126,21 +182,22 @@ const LoginScreen = () => {
         try {
             const result = await LoginManager.logInWithPermissions(['public_profile', 'email']);
             if (result.isCancelled) {
-                setFacebookLoading(false);
+                console.log('Login Facebook dibatalkan');
                 return;
             }
             const data = await AccessToken.getCurrentAccessToken();
-            if (!data) throw new Error('Gagal mendapatkan access token dari Facebook.');
-
+            if (!data) {
+                throw new Error('Gagal mendapatkan access token dari Facebook.');
+            }
             const apiResult = await contextLoginWithFacebook(data.accessToken.toString());
             if (apiResult && apiResult.success) {
                 showSuccessAndNavigate();
             } else if (apiResult && !apiResult.success) {
-                showErrorToast(apiResult.message);
+                Alert.alert("Login Facebook Gagal", apiResult.message);
             }
         } catch (error) {
             console.error("Facebook Login Error:", error);
-            showErrorToast(error.message || "Terjadi kesalahan.");
+            Alert.alert("Error Login Facebook", error.message || "Terjadi kesalahan.");
         } finally {
             setFacebookLoading(false);
         }
@@ -155,31 +212,27 @@ const LoginScreen = () => {
                 redirectUrl: 'com.pegijalanapp://oauth/redirect',
                 scopes: ['openid', 'profile', 'email', 'offline_access'],
             };
+
             const result = await authorize(config);
-            if (!result.accessToken) throw new Error('Gagal mendapatkan access token dari Microsoft.');
+            
+            if (!result.accessToken) {
+                throw new Error('Gagal mendapatkan access token dari Microsoft.');
+            }
 
             const apiResult = await contextLoginWithMicrosoft(result.accessToken);
+
             if (apiResult && apiResult.success) {
                 showSuccessAndNavigate();
             } else if (apiResult && !apiResult.success) {
-                showErrorToast(apiResult.message);
+                Alert.alert("Login Microsoft Gagal", apiResult.message);
             }
+
         } catch (error) {
             console.error("Microsoft Login Error:", error);
-            showErrorToast(error.message || "Terjadi kesalahan.");
+            Alert.alert("Error Login Microsoft", error.message || "Terjadi kesalahan.");
         } finally {
             setMicrosoftLoading(false);
         }
-    };
-
-    const showSuccessAndNavigate = () => {
-        showSuccessToast();
-        setTimeout(() => {
-            navigation.reset({
-                index: 0,
-                routes: [{ name: 'Main' }],
-            });
-        }, 1500);
     };
 
     const translate = (key) => t ? t(key) : key;
@@ -192,50 +245,99 @@ const LoginScreen = () => {
                 style={{ flex: 1 }}
             >
                 <View style={[styles.header, { paddingTop: insets.top + 10, paddingBottom: 15 }]}>
-                    <View style={styles.headerSide}><TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}><Image source={require('../assets/icons/chevron_left.png')} style={styles.backIcon} /></TouchableOpacity></View>
-                    <View style={styles.headerCenter}><Text style={styles.headerTitle}>{translate('login_title')}</Text></View>
+                    <View style={styles.headerSide}>
+                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                            <Image source={require('../assets/icons/chevron_left.png')} style={styles.backIcon} />
+                        </TouchableOpacity>
+                    </View>
+                    <View style={styles.headerCenter}>
+                        <Text style={styles.headerTitle}>{translate('login_title')}</Text>
+                    </View>
                     <View style={styles.headerSide} />
                 </View>
 
                 <View style={styles.container}>
                     <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
-                        <View style={styles.promptContainer}><Text style={styles.promptText}>{translate('dont_have_account')}<Text style={styles.promptLink} onPress={() => navigation.navigate('Register')}>{' '}{translate('signup')}</Text></Text></View>
+                        <View style={styles.promptContainer}>
+                            <Text style={styles.promptText}>
+                                {translate('dont_have_account')}
+                                <Text style={styles.promptLink} onPress={() => navigation.navigate('Register')}>
+                                    {' '}{translate('signup')}
+                                </Text>
+                            </Text>
+                        </View>
                         <View style={styles.formCard}>
-                            <TextInput style={styles.input} placeholder={translate('Email')} placeholderTextColor="#A0A0A0" value={loginInput} onChangeText={setLoginInput} keyboardType="email-address" autoCapitalize="none"/>
+                            <TextInput
+                                style={styles.input}
+                                placeholder={translate('Email')}
+                                placeholderTextColor="#A0A0A0"
+                                value={loginInput}
+                                onChangeText={setLoginInput}
+                                keyboardType="email-address"
+                                autoCapitalize="none"
+                            />
                             <View style={styles.passwordContainer}>
-                                <TextInput style={styles.inputPassword} placeholder={translate('password_placeholder')} placeholderTextColor="#A0A0A0" value={password} onChangeText={setPassword} secureTextEntry={!showPassword}/>
-                                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}><Image source={showPassword ? require('../assets/icons/eye.png') : require('../assets/icons/eye-off.png')} style={styles.eyeIcon}/></TouchableOpacity>
+                                <TextInput
+                                    style={styles.inputPassword}
+                                    placeholder={translate('password_placeholder')}
+                                    placeholderTextColor="#A0A0A0"
+                                    value={password}
+                                    onChangeText={setPassword}
+                                    secureTextEntry={!showPassword}
+                                />
+                                <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.eyeButton}>
+                                    <Image
+                                        source={showPassword ? require('../assets/icons/eye.png') : require('../assets/icons/eye-off.png')}
+                                        style={styles.eyeIcon}
+                                    />
+                                </TouchableOpacity>
                             </View>
-                            <TouchableOpacity style={styles.forgotPasswordButton} onPress={() => navigation.navigate('ForgotPassword')}><Text style={styles.forgotPasswordText}>{translate('forgot_password')}</Text></TouchableOpacity>
-                            <TouchableOpacity style={styles.loginButton} onPress={handleLogin} disabled={isLoading || isGoogleLoading || isFacebookLoading || isMicrosoftLoading}>
+                            <TouchableOpacity style={styles.forgotPasswordButton} onPress={() => navigation.navigate('ForgotPassword')}>
+                                <Text style={styles.forgotPasswordText}>{translate('forgot_password')}</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.loginButton}
+                                onPress={handleLogin}
+                                disabled={isLoading || isGoogleLoading || isFacebookLoading || isMicrosoftLoading}
+                            >
                                 {isLoading ? <ActivityIndicator color="#333333" /> : <Text style={styles.loginButtonText}>{translate('login_button')}</Text>}
                             </TouchableOpacity>
                         </View>
+
                         <Text style={styles.dividerText}>{translate('or_signin_with')}</Text>
+
                         <View style={styles.socialContainer}>
-                            <TouchableOpacity style={styles.facebookButton} onPress={handleFacebookSignIn} disabled={isLoading || isGoogleLoading || isFacebookLoading || isMicrosoftLoading}>{isFacebookLoading ? <ActivityIndicator color="#1877F2" /> : <Image source={require('../assets/icons/facebook.png')} style={styles.facebookIcon} />}</TouchableOpacity>
-                            <TouchableOpacity style={styles.socialButton} onPress={handleGoogleSignIn} disabled={isLoading || isGoogleLoading || isFacebookLoading || isMicrosoftLoading}>{isGoogleLoading ? <ActivityIndicator color="#4285F4" /> : <Image source={require('../assets/icons/google.png')} style={styles.socialIcon} />}</TouchableOpacity>
-                            <TouchableOpacity style={styles.socialButton} onPress={handleMicrosoftSignIn} disabled={isLoading || isGoogleLoading || isFacebookLoading || isMicrosoftLoading}>{isMicrosoftLoading ? <ActivityIndicator color="#0078D4" /> : <Image source={require('../assets/icons/microsoft.png')} style={styles.socialIcon} />}</TouchableOpacity>
+                            <TouchableOpacity 
+                                style={styles.facebookButton} 
+                                onPress={handleFacebookSignIn} 
+                                disabled={isLoading || isGoogleLoading || isFacebookLoading || isMicrosoftLoading}
+                            >
+                                {isFacebookLoading ? <ActivityIndicator color="#1877F2" /> : <Image source={require('../assets/icons/facebook.png')} style={styles.facebookIcon} />}
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                style={styles.socialButton} 
+                                onPress={handleGoogleSignIn} 
+                                disabled={isLoading || isGoogleLoading || isFacebookLoading || isMicrosoftLoading}
+                            >
+                                {isGoogleLoading ? <ActivityIndicator color="#4285F4" /> : <Image source={require('../assets/icons/google.png')} style={styles.socialIcon} />}
+                            </TouchableOpacity>
+                            <TouchableOpacity 
+                                style={styles.socialButton} 
+                                onPress={handleMicrosoftSignIn}
+                                disabled={isLoading || isGoogleLoading || isFacebookLoading || isMicrosoftLoading}
+                            >
+                                {isMicrosoftLoading ? <ActivityIndicator color="#0078D4" /> : <Image source={require('../assets/icons/microsoft.png')} style={styles.socialIcon} />}
+                            </TouchableOpacity>
                         </View>
                     </ScrollView>
                 </View>
             </KeyboardAvoidingView>
 
-            {/* Success Toast */}
             {toastVisible && (
-                <Animated.View style={[styles.toastContainer, { top: insets.top + 10, opacity: toastOpacity }]}>
+                <Animated.View style={[styles.toastContainer, { opacity: toastOpacity, top: insets.top + 70 }]}>
                     <View style={styles.toastContent}>
                         <Image source={require('../assets/icons/checkmark-circle.png')} style={styles.toastIcon} />
                         <Text style={styles.toastText}>Login Sukses!</Text>
-                    </View>
-                </Animated.View>
-            )}
-
-            {/* Error Toast */}
-            {errorToastVisible && (
-                <Animated.View style={[styles.toastContainer, { top: insets.top + 10, opacity: errorToastOpacity }]}>
-                    <View style={[styles.toastContent, styles.errorToast]}>
-                        <Text style={styles.toastText}>{errorToastMessage}</Text>
                     </View>
                 </Animated.View>
             )}
@@ -246,7 +348,13 @@ const LoginScreen = () => {
 const styles = StyleSheet.create({
     safeArea: { flex: 1, backgroundColor: COLORS.secondary },
     container: { flex: 1, backgroundColor: '#F8F9FA' },
-    header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, backgroundColor: COLORS.secondary, elevation: 5, },
+    header: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        backgroundColor: COLORS.secondary,
+        elevation: 5,
+    },
     headerSide: { flex: 1 },
     headerCenter: { flex: 2, alignItems: 'center' },
     backButton: { alignSelf: 'flex-start', padding: 8 },
@@ -257,9 +365,30 @@ const styles = StyleSheet.create({
     promptText: { fontSize: 15, color: '#333333' },
     promptLink: { color: COLORS.primary, fontWeight: '600' },
     formCard: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 24, elevation: 5, shadowColor: '#555555', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 10 },
-    input: { fontSize: 16, borderWidth: 1, borderColor: '#E0E0E0', borderRadius: 14, paddingHorizontal: 20, paddingVertical: 12, marginBottom: 16, color: '#333333', },
-    passwordContainer: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#E0E0E0', borderRadius: 14 },
-    inputPassword: { fontSize: 16, flex: 1, paddingHorizontal: 20, paddingVertical: 12, color: '#333333', },
+    input: {
+        fontSize: 16,
+        borderWidth: 1,
+        borderColor: '#E0E0E0',
+        borderRadius: 14,
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        marginBottom: 16,
+        color: '#333333',
+    },
+    passwordContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#E0E0E0',
+        borderRadius: 14
+    },
+    inputPassword: {
+        fontSize: 16,
+        flex: 1,
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        color: '#333333',
+    },
     eyeButton: { padding: 12 },
     eyeIcon: { width: 24, height: 24, tintColor: '#333333' },
     forgotPasswordButton: { alignSelf: 'flex-end', marginTop: 8, marginBottom: 20 },
@@ -277,24 +406,33 @@ const styles = StyleSheet.create({
         left: 20,
         right: 20,
         alignItems: 'center',
-        zIndex: 999
-        // DIPERBAIKI: 'bottom' dihapus agar posisi bisa diatur dari inline style
+        zIndex: 9999
     },
-    toastContent: { backgroundColor: '#2E7D32', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 25, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5, },
+    toastContent: {
+        backgroundColor: '#2E7D32',
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
+        elevation: 5,
+    },
     toastText: {
         color: 'white',
         fontSize: 14,
         fontWeight: '600',
+        marginLeft: 10,
     },
     toastIcon: {
         width: 20,
         height: 20,
         tintColor: 'white',
-        marginRight: 10,
-    },
-    errorToast: {
-        backgroundColor: '#D32F2F',
-    },
+    }
 });
 
 export default LoginScreen;
