@@ -23,7 +23,7 @@ const SplashScreen = ({ navigation }) => {
       <Image
         // PENTING: Pastikan Anda memiliki gambar di path ini.
         // Ganti 'logo.png' dengan nama file ikon Anda.
-        source={require('../assets/icons/holiday.png')}
+        source={require('../assets/icons/holiday.webp')}
         style={styles.logo}
       />
     </View>
