@@ -12,11 +12,15 @@ export const COLORS = {
     mediumGray: '#6e6e6e',      // Ubah jadi abu-abu gelap
     lightGray: '#F4F4F8',
     border: '#E0E0E0',
+    error: '#FF3B30', // Merah untuk error
+    success: '#4CAF50', // Hijau untuk sukses
+    gray : '#6e6e6e', // Abu-abu untuk teks placeholder
 
     text_dark: '#333333',
     text_light: '#4a4a4a',      // Ubah jadi abu-abu gelap agar teks lebih jelas
     background: '#F8F9FA',
     primary_light: 'rgba(88, 63, 153, 0.1)',
+    text_gray: '#333333', // Abu-abu untuk teks yang tidak terlalu penting
 };
 
 // Definisikan semua ukuran dinamis di sini
