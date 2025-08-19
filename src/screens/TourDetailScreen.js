@@ -17,10 +17,10 @@ import {
     Modal,
     Platform,
 } from 'react-native';
-import axios from 'axios';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, SIZES, FONTS } from '../constants/theme';
 import { useAuth } from '../context/AuthContext';
-import CheckoutScreen from './CheckoutScreen';
+import { useNavigation, useRoute } from '@react-navigation/native';
 
 // --- KONSTANTA ---
 const STATUS_COLORS = {
@@ -30,20 +30,19 @@ const STATUS_COLORS = {
 };
 
 const API_BASE_URL = "https://tiket.crelixdigital.com/api";
-const IMAGE_BASE_URL = "https://tiket.crelixdigital.com/api";
+const IMAGE_BASE_URL = "https://tiket.crelixdigital.com/";
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const HEADER_CHANGE_THRESHOLD = 50;
 
 // --- FUNGSI BANTUAN ---
 const formatRupiah = (amount) => {
-    const number = parseInt(amount, 10);
+    const number = parseFloat(amount);
     if (isNaN(number)) {
         return 'IDR 0';
     }
     return `IDR ${number.toLocaleString('id-ID')}`;
 };
 
-// --- KOMPONEN KUSTOM UNTUK HARGA CORET ---
 const SlantedStrikethroughPrice = ({ textStyle, children }) => {
     const [textWidth, setTextWidth] = useState(0);
 
@@ -69,11 +68,13 @@ const SlantedStrikethroughPrice = ({ textStyle, children }) => {
     );
 };
 
+// --- KOMPONEN BOOKING MODAL ---
+const BookingModal = ({ visible, onClose, packageData, tourData, tourTitle }) => { // ✅ PERBAIKAN 1: Menerima prop 'tourData'
+    if (!packageData || !tourData) return null;
 
-// --- KOMPONEN BOOKING MODAL (DIPERBARUI) ---
-const BookingModal = ({ visible, onClose, packageData, navigation }) => {
-    if (!packageData) return null;
-
+    const navigation = useNavigation();
+    const { user } = useAuth();
+    
     const [ticketCounts, setTicketCounts] = useState({});
     const [ticketCategories, setTicketCategories] = useState([]);
     const [dates, setDates] = useState([]);
@@ -81,21 +82,17 @@ const BookingModal = ({ visible, onClose, packageData, navigation }) => {
 
     useEffect(() => {
         if (!packageData) return;
+        
         const categories = [];
-        if (packageData.price_per_person > 0) {
+        const finalPrice = packageData.promo_price && parseFloat(packageData.promo_price) > 0 ? parseFloat(packageData.promo_price) : parseFloat(packageData.price);
+        const originalPrice = parseFloat(packageData.price);
+
+        if (finalPrice > 0) {
             categories.push({
                 key: 'adult',
                 title: 'Dewasa',
-                price: packageData.price_per_person,
-                originalPrice: packageData.original_price_per_person || packageData.price_per_person,
-            });
-        }
-        if (typeof packageData.child_price === 'number' && packageData.child_price > 0) {
-            categories.push({
-                key: 'child',
-                title: 'Anak',
-                price: packageData.child_price,
-                originalPrice: packageData.original_child_price || packageData.child_price,
+                price: finalPrice,
+                originalPrice: originalPrice > finalPrice ? originalPrice : null,
             });
         }
         setTicketCategories(categories);
@@ -135,31 +132,41 @@ const BookingModal = ({ visible, onClose, packageData, navigation }) => {
         return total + (count * category.price);
     }, 0);
     
-    // Fungsi ini diubah untuk navigasi ke CheckoutScreen
     const handleBooking = () => {
         if (totalPrice === 0) {
             Alert.alert("Perhatian", "Silakan pilih jumlah tiket terlebih dahulu.");
             return;
         }
-        
+
         const orderDetails = {
+            tourData: tourData, // ✅ PERBAIKAN 2: Menambahkan 'tourData' ke dalam objek orderDetails
             packageData: packageData,
-            selectedDate: selectedDate.toISOString(),
+            selectedDate: selectedDate?.toISOString(),
             ticketCounts: ticketCounts,
             totalPrice: totalPrice,
             totalPax: totalPax,
         };
 
-        navigation.navigate('CheckoutScreen', { orderDetails });
-
+        if (!user) {
+            onClose(); 
+            navigation.navigate('Login', { 
+                redirect: { 
+                    screen: 'Checkout', 
+                    params: { orderDetails: orderDetails }
+                }
+            });
+            return;
+        }
+        
         onClose();
+        navigation.navigate('Checkout', { orderDetails });
     };
 
     const TicketCounter = ({ title, price, originalPrice, count, setCount }) => (
         <View style={styles.ticketCounterContainer}>
             <View style={styles.ticketInfoWrapper}>
                 <Text style={styles.ticketTitle}>{title}</Text>
-                {originalPrice > price && (
+                {originalPrice > price && originalPrice && (
                     <SlantedStrikethroughPrice textStyle={styles.originalPriceText}>
                         {formatRupiah(originalPrice)}
                     </SlantedStrikethroughPrice>
@@ -200,11 +207,11 @@ const BookingModal = ({ visible, onClose, packageData, navigation }) => {
                         <View style={styles.bookingModalInnerContent}>
                             <View style={styles.selectedPackageCard}>
                                 <Text style={styles.packageDetailTitle}>Paket Terpilih</Text>
-                                <Text style={styles.packageDetailName}>{packageData.package_name}</Text>
+                                <Text style={styles.packageDetailName}>{packageData.name || tourTitle}</Text>
                                 <View style={styles.packageInfoRow}>
                                     <Image source={require('../assets/icons/calendar.png')} style={styles.modalInfoIcon} />
                                     <Text style={styles.packageDetailInfo}>
-                                        Masa berlaku: {selectedDate ? selectedDate.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '...'}
+                                        Masa berlaku: {selectedDate ? new Date(selectedDate).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }) : '...'}
                                     </Text>
                                 </View>
                                 <View style={styles.packageInfoRow}>
@@ -229,12 +236,12 @@ const BookingModal = ({ visible, onClose, packageData, navigation }) => {
                             </View>
                             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: SIZES.padding }}>
                                 {dates.map((date, index) => {
-                                    const isSelected = selectedDate && date.toDateString() === selectedDate.toDateString();
+                                    const isSelected = selectedDate && date.toDateString() === new Date(selectedDate).toDateString();
                                     return (
                                         <TouchableOpacity
                                             key={index}
                                             style={[styles.dateChip, isSelected && styles.dateChipSelected]}
-                                            onPress={() => setSelectedDate(date)}
+                                            onPress={() => setSelectedDate(date.toISOString())}
                                         >
                                             <Text style={[styles.dateChipText, isSelected && styles.dateChipTextSelected]}>
                                                 {date.toLocaleDateString('id-ID', { weekday: 'short' })}
@@ -243,7 +250,7 @@ const BookingModal = ({ visible, onClose, packageData, navigation }) => {
                                                 {date.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}
                                             </Text>
                                         </TouchableOpacity>
-                                    )
+                                    );
                                 })}
                             </ScrollView>
 
@@ -274,7 +281,11 @@ const BookingModal = ({ visible, onClose, packageData, navigation }) => {
                             </Text>
                             <Text style={styles.totalValue}>{formatRupiah(totalPrice)}</Text>
                         </View>
-                        <TouchableOpacity style={[styles.bookButton, totalPrice === 0 && styles.bookButtonDisabled]} onPress={CheckoutScreen} disabled={totalPrice === 0}>
+                        <TouchableOpacity 
+                            style={[styles.bookButton, totalPrice === 0 ? styles.bookButtonDisabled : null]} 
+                            onPress={handleBooking} 
+                            disabled={totalPrice === 0}
+                        >
                             <Text style={styles.bookButtonText}>Pesan</Text>
                         </TouchableOpacity>
                     </View>
@@ -284,11 +295,9 @@ const BookingModal = ({ visible, onClose, packageData, navigation }) => {
     );
 };
 
-
-// --- KOMPONEN SEKSIONAL ---
 const HighlightRoute = ({ tour }) => {
     const [modalVisible, setModalVisible] = useState(false);
-    const allHighlights = tour.highlights || [];
+    const allHighlights = tour?.highlights || [];
     const VISIBLE_ITEMS_LIMIT = 2;
     const needsTruncation = allHighlights.length > VISIBLE_ITEMS_LIMIT;
     const visibleHighlights = needsTruncation ? allHighlights.slice(0, VISIBLE_ITEMS_LIMIT) : allHighlights;
@@ -333,19 +342,23 @@ const HighlightRoute = ({ tour }) => {
 };
 
 const PackagesRoute = React.memo(({ tour, onPackageSelect }) => {
-    let displayPackages = tour.packages || [];
+    let displayPackages = tour?.packages || [];
+    
+    const transformPackageData = (pkg) => {
+        const originalPrice = parseFloat(pkg.price);
+        const promoPrice = pkg.promo_price ? parseFloat(pkg.promo_price) : null;
+        
+        return {
+            ...pkg,
+            name: pkg.name && pkg.name.length > 0 ? pkg.name : tour.title,
+            price_per_person: promoPrice || originalPrice,
+            original_price_per_person: promoPrice ? originalPrice : null,
+            status: pkg.is_available ? 'active' : 'inactive',
+        };
+    };
 
-    if (displayPackages.length === 0 && tour.price_per_person > 0) {
-        displayPackages = [{
-            id: tour.id,
-            package_name: tour.package_name,
-            price_per_person: tour.price_per_person,
-            original_price_per_person: tour.original_price_per_person,
-            status: tour.status || 'active',
-            refund_policy: tour.refund_policy || 'No Refund',
-            child_price: tour.child_price,
-            original_child_price: tour.original_child_price,
-        }];
+    if (displayPackages.length > 0) {
+        displayPackages = displayPackages.map(transformPackageData);
     }
 
     if (displayPackages.length === 0) {
@@ -361,19 +374,19 @@ const PackagesRoute = React.memo(({ tour, onPackageSelect }) => {
         <View style={styles.scene}>
             <Text style={styles.sectionTitle}>Paket</Text>
             {displayPackages.map((pkg) => {
-                const isAvailable = pkg.status === 'active';
-                const isRefundable = pkg.refund_policy !== "No Refund";
+                const isAvailable = pkg.is_available;
+                const isRefundable = (pkg.refund_policy && pkg.refund_policy.length > 0 && pkg.refund_policy[0].policy !== "No Refund");
                 
-                const finalPrice = pkg.price_per_person;
-                const originalPrice = pkg.original_price_per_person;
-                const hasDiscount = originalPrice && originalPrice > finalPrice;
+                const finalPrice = pkg.promo_price ? parseFloat(pkg.promo_price) : parseFloat(pkg.price);
+                const originalPrice = parseFloat(pkg.price);
+                const hasDiscount = pkg.promo_price && originalPrice > finalPrice;
 
                 return (
                     <View key={pkg.id} style={[styles.packageItemCard, !isAvailable && styles.packageItemCardDisabled]}>
                         <View style={styles.packageItemContent}>
                             <View style={styles.packageItemHeader}>
-                                <Text style={styles.packageItemTitle} numberOfLines={2}>{pkg.package_name}</Text>
-                                <TouchableOpacity onPress={() => Alert.alert("Itinerary", `Menampilkan itinerary untuk ${pkg.package_name}`)}>
+                                <Text style={styles.packageItemTitle} numberOfLines={2}>{pkg.name && pkg.name.length > 0 ? pkg.name : tour.title}</Text>
+                                <TouchableOpacity onPress={() => Alert.alert("Itinerary", `Menampilkan itinerary untuk ${pkg.name}`)}>
                                     <Text style={styles.itineraryLink}>Lihat itinerary</Text>
                                 </TouchableOpacity>
                             </View>
@@ -422,10 +435,10 @@ const PackagesRoute = React.memo(({ tour, onPackageSelect }) => {
 });
 
 const LocationRoute = React.memo(({ tour }) => {
-    const hasCoords = tour.latitude && tour.longitude;
+    const hasCoords = tour?.latitude && tour?.longitude;
     const locationQuery = hasCoords
         ? `${tour.latitude},${tour.longitude}`
-        : tour.main_destination || tour.location_city;
+        : tour?.main_destination || tour?.location_city;
 
     const handleViewMap = () => {
         if (!locationQuery) {
@@ -457,10 +470,10 @@ const LocationRoute = React.memo(({ tour }) => {
                 />
                 <View>
                     <Text style={styles.locationText}>
-                        {tour.location_city || 'Kota tidak tersedia'}
+                        {tour?.location_city || 'Kota tidak tersedia'}
                     </Text>
                     <Text style={styles.locationSubText}>
-                        {tour.main_destination || 'Destinasi utama tidak tersedia'}
+                        {tour?.location_country || 'Destinasi utama tidak tersedia'}
                     </Text>
                 </View>
             </View>
@@ -474,12 +487,28 @@ const LocationRoute = React.memo(({ tour }) => {
 const DescriptionRoute = React.memo(({ tour }) => (
     <View style={styles.scene}>
         <Text style={styles.sectionTitle}>Deskripsi Tur</Text>
-        <Text style={styles.bodyText}>{tour.description || tour.short_description || 'Deskripsi detail belum tersedia.'}</Text>
+        <Text style={styles.bodyText}>{tour?.description || tour?.short_description || 'Deskripsi detail belum tersedia.'}</Text>
+    </View>
+));
+
+const ItineraryRoute = React.memo(({ itineraries }) => (
+    <View style={styles.scene}>
+        <Text style={styles.sectionTitle}>Itinerary</Text>
+        {itineraries && itineraries.length > 0 ? (
+            itineraries.map((item, index) => (
+                <View key={item.id} style={styles.itineraryItem}>
+                    <Text style={styles.itineraryDay}>Hari {item.day_number}: {item.title}</Text>
+                    <Text style={styles.itineraryDescription}>{item.description}</Text>
+                </View>
+            ))
+        ) : (
+            <Text style={styles.bodyText}>Itinerary untuk tur ini belum tersedia.</Text>
+        )}
     </View>
 ));
 
 const GalleryRoute = React.memo(({ tour }) => {
-    const images = tour.images || [];
+    const images = tour?.images || [];
 
     return (
         <View style={styles.scene}>
@@ -501,10 +530,11 @@ const GalleryRoute = React.memo(({ tour }) => {
 });
 
 
-// --- KOMPONEN UTAMA ---
+// --- KOMPONEN UTAMA TourDetailScreen ---
 const TourDetailScreen = ({ route, navigation }) => {
     const { tourId } = route.params;
-    const { addRecentSearch } = useAuth();
+    const { addRecentSearch, axiosInstance } = useAuth();
+    const insets = useSafeAreaInsets(); 
     const [tourData, setTourData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -525,6 +555,7 @@ const TourDetailScreen = ({ route, navigation }) => {
         { key: 'highlight', title: 'Highlight' },
         { key: 'packages', title: 'Paket' },
         { key: 'description', title: 'Deskripsi' },
+        { key: 'itinerary', title: 'Itinerary' },
         { key: 'gallery', title: 'Galeri' },
         { key: 'location', title: 'Lokasi' },
     ];
@@ -562,7 +593,6 @@ const TourDetailScreen = ({ route, navigation }) => {
         }
     };
     
-    // --- KODE HANDLESCROLL YANG SUDAH DIPERBAIKI ---
     const handleScroll = useCallback((event) => {
         const scrollY = event.nativeEvent.contentOffset.y;
         
@@ -586,12 +616,12 @@ const TourDetailScreen = ({ route, navigation }) => {
             setActiveTabKey(currentSectionKey); 
         }
 
-        // Logika untuk menampilkan bottomBar tanpa menghilangkannya di bawah
-        const packageSectionY = sectionLayouts['packages'];
-        if (packageSectionY !== undefined) {
-            const shouldShow = scrollY >= packageSectionY - headerHeight;
-            if (shouldShow !== showBottomBar) {
-                setShowBottomBar(shouldShow);
+        const packagesY = sectionLayouts['packages'];
+        if (packagesY !== undefined) {
+            const scrollDistanceToPackages = packagesY - (headerHeight || 0);
+            const isScrollingBelowPackages = scrollY > scrollDistanceToPackages;
+            if (isScrollingBelowPackages !== showBottomBar) {
+                setShowBottomBar(isScrollingBelowPackages);
             }
         }
     }, [showHeader, sectionLayouts, headerHeight, activeTabKey, showBottomBar]);
@@ -607,64 +637,63 @@ const TourDetailScreen = ({ route, navigation }) => {
     useEffect(() => {
         const fetchTourDetail = async () => {
             if (!tourId) {
-                setError("ID Tur tidak valid.");
+                setTourData({});
+                setLoading(false);
+                return;
+            }
+            if (!axiosInstance) {
+                setTourData({});
                 setLoading(false);
                 return;
             }
             try {
                 setLoading(true);
-                setError(null);
-                const response = await axios.get(`${API_BASE_URL}/tour-packages/${tourId}`);
+                const response = await axiosInstance.get(`/tours/${tourId}`);
                 if (response.data && response.data.data) {
                     let data = response.data.data;
-
-                    const transformPriceData = (pkg) => {
-                        const originalPrice = parseFloat(pkg.price_per_person) || 0;
-                        const discount = parseFloat(pkg.price_discount) || 0;
-                        const finalPrice = originalPrice - discount;
-                        const childPrice = pkg.child_price ? parseFloat(pkg.child_price) : null;
-                        const originalChildPrice = pkg.original_child_price ? parseFloat(pkg.original_child_price) : null;
-                        return { 
-                            ...pkg, 
-                            original_price_per_person: originalPrice, 
-                            price_per_person: finalPrice,
-                            child_price: childPrice,
-                            original_child_price: originalChildPrice || childPrice
-                        };
+                    const parseJSONSafe = (str) => {
+                        if (str) {
+                            try { return JSON.parse(str); } 
+                            catch (e) { return []; }
+                        }
+                        return [];
                     };
-
-                    data = transformPriceData(data);
-                    if (data.related_packages) {
-                        data.packages = data.related_packages;
-                    }
-                    if (data.packages && Array.isArray(data.packages)) {
-                        data.packages = data.packages.map(transformPriceData);
-                    }
-                    if (data.images && Array.isArray(data.images)) {
-                        data.images = data.images.map(img => ({ ...img, image_url: img.image_url.startsWith('http') ? img.image_url : `${IMAGE_BASE_URL}${img.image_url}` }));
-                    }
-                    setTourData(data);
-                    if (data) {
+                    const transformTourData = (tour) => ({
+                        ...tour,
+                        package_name: tour.title,
+                        duration_days: tour.duration,
+                        packages: tour.packages ? tour.packages.map(pkg => ({
+                            ...pkg,
+                            name: pkg.name && pkg.name.length > 0 ? pkg.name : tour.title,
+                            facilities: parseJSONSafe(pkg.facilities),
+                        })) : [],
+                        images: tour.images ? tour.images.map(img => ({ image_url: `${IMAGE_BASE_URL}/${img}` })) : [],
+                        highlights: parseJSONSafe(tour.highlights),
+                        itineraries: tour.itineraries || [],
+                    });
+                    const transformedData = transformTourData(data);
+                    setTourData(transformedData);
+                    if (transformedData && typeof addRecentSearch === 'function') {
                         addRecentSearch('tour', {
-                            id: data.id,
-                            destination: data.package_name,
-                            main_destination: data.main_destination,
-                            location_city: data.location_city,
-                            imageUrl: data.images && data.images.length > 0 ? data.images[0].image_url.replace(IMAGE_BASE_URL, '') : null,
+                            id: transformedData.id,
+                            destination: transformedData.package_name,
+                            main_destination: transformedData.main_destination,
+                            location_city: transformedData.location_city,
+                            imageUrl: transformedData.images && transformedData.images.length > 0 ? transformedData.images[0].image_url : null,
                         });
                     }
                 } else {
-                    setError("Format data dari server tidak sesuai.");
+                    setTourData({}); 
                 }
             } catch (err) {
-                console.error("API Fetch Error:", err);
-                setError("Gagal memuat data tur. Periksa koneksi Anda.");
+                setError(err.response?.data?.message || 'Gagal memuat data. Mohon coba lagi.');
+                setTourData({});
             } finally {
                 setLoading(false);
             }
         };
         fetchTourDetail();
-    }, [tourId, addRecentSearch]);
+    }, [tourId, addRecentSearch, axiosInstance]);
 
     const onShare = async () => {
         if (!tourData) return;
@@ -712,7 +741,7 @@ const TourDetailScreen = ({ route, navigation }) => {
                 {tourData.images && tourData.images.length > 1 && renderImagePagination()}
             </View>
             <View style={styles.mainInfoContainer}>
-                <Text style={styles.tourTitle}>{tourData.package_name}</Text>
+                <Text style={styles.tourTitle}>{tourData.package_name || 'Nama Tur tidak tersedia'}</Text>
                 <View style={styles.infoRow}>
                     <Image
                         source={require('../assets/icons/map_placeholder.png')}
@@ -723,7 +752,7 @@ const TourDetailScreen = ({ route, navigation }) => {
                             {tourData.location_city || 'Kota tidak tersedia'}
                         </Text>
                         <Text style={styles.infoSubText}>
-                            {tourData.main_destination || 'Destinasi utama tidak tersedia'}
+                            {tourData.location_country || 'Destinasi utama tidak tersedia'}
                         </Text>
                     </View>
                 </View>
@@ -732,7 +761,7 @@ const TourDetailScreen = ({ route, navigation }) => {
                         source={require('../assets/icons/clock.png')}
                         style={styles.infoIcon}
                     />
-                    <Text style={styles.infoText}> {tourData.duration_days} Hari</Text>
+                    <Text style={styles.infoText}> {tourData.duration_days || 'Durasi tidak tersedia'}</Text>
                 </View>
             </View>
         </View>
@@ -741,23 +770,43 @@ const TourDetailScreen = ({ route, navigation }) => {
     if (loading) {
         return <View style={styles.centerContainer}><ActivityIndicator size="large" color={COLORS.secondary} /></View>;
     }
+    
+    const hasTourData = tourData && Object.keys(tourData).length > 0;
 
-    if (error || !tourData) {
-        return <View style={styles.centerContainer}><Text style={styles.errorText}>{error}</Text></View>;
-    }
-
-    const packagesWithPrice = tourData.packages?.filter(p => p.price_per_person > 0) || [];
+    const packagesWithPrice = hasTourData ? tourData.packages?.filter(p => p.price > 0) || [] : [];
     let priceFromPackage = null;
     if (packagesWithPrice.length > 0) {
         priceFromPackage = packagesWithPrice.reduce((minPkg, currentPkg) => {
-            return currentPkg.price_per_person < minPkg.price_per_person ? currentPkg : minPkg;
+            const minPrice = currentPkg.promo_price ? parseFloat(currentPkg.promo_price) : parseFloat(currentPkg.price);
+            const initialMinPrice = minPkg.promo_price ? parseFloat(minPkg.promo_price) : parseFloat(minPkg.price);
+            return minPrice < initialMinPrice ? currentPkg : minPkg;
         });
-    } else if (tourData.price_per_person > 0) {
-        priceFromPackage = tourData;
     }
-    const priceFrom = priceFromPackage ? priceFromPackage.price_per_person : 0;
-    const originalPriceFrom = priceFromPackage ? priceFromPackage.original_price_per_person : 0;
-    const hasDiscountFrom = originalPriceFrom && originalPriceFrom > priceFrom;
+
+    const priceFrom = priceFromPackage ? (priceFromPackage.promo_price ? parseFloat(priceFromPackage.promo_price) : parseFloat(priceFromPackage.price)) : 0;
+    const originalPriceFrom = priceFromPackage ? parseFloat(priceFromPackage.price) : 0;
+    const hasDiscountFrom = originalPriceFrom && priceFrom < originalPriceFrom;
+
+    if (!hasTourData) {
+        return (
+            <SafeAreaView style={styles.safeArea}>
+                <View style={styles.floatingHeaderContainer}>
+                    <TouchableOpacity onPress={() => navigation.goBack()} style={styles.floatingIconButton}>
+                        <Image source={require('../assets/icons/left_arrow.png')} style={styles.floatingIconImage} />
+                    </TouchableOpacity>
+                </View>
+                <View style={styles.centerContainer}>
+                    <Image source={require('../assets/icons/no-data.png')} style={{width: 100, height: 100}} />
+                    <Text style={styles.tourTitle}>Data Tur Tidak Ditemukan</Text>
+                    <Text style={styles.bodyText}>Mohon maaf, kami tidak dapat menemukan detail tur yang Anda cari.</Text>
+                    <Text style={styles.bodyText}>Tur yang Anda cari dengan ID: {tourId}</Text>
+                    <TouchableOpacity style={styles.viewMapButton} onPress={() => navigation.goBack()}>
+                        <Text style={styles.viewMapButtonText}>Kembali</Text>
+                    </TouchableOpacity>
+                </View>
+            </SafeAreaView>
+        );
+    }
 
     return (
         <SafeAreaView style={styles.safeArea}>
@@ -794,13 +843,15 @@ const TourDetailScreen = ({ route, navigation }) => {
                 <View style={styles.separator} />
                 <View onLayout={(e) => handleSectionLayout('description', e)}><DescriptionRoute tour={tourData} /></View>
                 <View style={styles.separator} />
+                <View onLayout={(e) => handleSectionLayout('itinerary', e)}><ItineraryRoute itineraries={tourData?.itineraries} /></View>
+                <View style={styles.separator} />
                 <View onLayout={(e) => handleSectionLayout('gallery', e)}><GalleryRoute tour={tourData} /></View>
                 <View style={styles.separator} />
                 <View onLayout={(e) => handleSectionLayout('location', e)}><LocationRoute tour={tourData} /></View>
                 <View style={{ height: 100 }} />
             </ScrollView>
             {showBottomBar && (
-                <View style={styles.bottomBar}>
+                <View style={[styles.bottomBar, { paddingBottom: SIZES.radius + insets.bottom }]}>
                     <View>
                         {hasDiscountFrom ? (
                             <>
@@ -830,10 +881,11 @@ const TourDetailScreen = ({ route, navigation }) => {
             )}
             
             <BookingModal 
-              visible={isBookingModalVisible} 
-              onClose={() => setBookingModalVisible(false)} 
-              packageData={selectedPackage}
-              navigation={navigation} 
+                visible={isBookingModalVisible} 
+                onClose={() => setBookingModalVisible(false)} 
+                packageData={selectedPackage}
+                tourData={tourData} // ✅ PERBAIKAN 3: Meneruskan prop 'tourData' saat memanggil BookingModal
+                tourTitle={tourData?.title}
             />
         </SafeAreaView>
     );
@@ -843,8 +895,7 @@ const TourDetailScreen = ({ route, navigation }) => {
 // --- STYLESHEET ---
 const styles = StyleSheet.create({
     safeArea: { flex: 1, backgroundColor: COLORS.white },
-    centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: SIZES.padding * 2 },
-    errorText: { ...FONTS.body3, color: STATUS_COLORS.danger, textAlign: 'center' },
+    centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: SIZES.padding * 2, backgroundColor: COLORS.white },
     headerImage: { width: screenWidth, height: 280, backgroundColor: COLORS.lightGray },
     floatingHeaderContainer: {
         position: 'absolute', top: 0, left: 0, right: 0, zIndex: 5,
@@ -877,19 +928,19 @@ const styles = StyleSheet.create({
     tourTitle: { ...FONTS.h3, color: COLORS.text_dark, marginBottom: SIZES.radius },
     infoRow: { flexDirection: 'row', alignItems: 'center', marginTop: SIZES.base },
     infoIcon: {
-        width: 16, height: 16, marginRight: SIZES.base, resizeMode: 'contain', tintColor: COLORS.mediumGray
+        width: 16, height: 16, marginRight: SIZES.base, resizeMode: 'contain', tintColor: '#888888'
     },
-    infoText: { ...FONTS.body4, color: COLORS.text_light, display: 'flex', alignItems: 'center', },
-    infoSubText: { ...FONTS.caption, color: COLORS.mediumGray, },
+    infoText: { ...FONTS.body4, color: '#555555', display: 'flex', alignItems: 'center', },
+    infoSubText: { ...FONTS.caption, color: '#888888', },
     tabBarContainer: { backgroundColor: COLORS.white, borderBottomWidth: 1, borderColor: COLORS.border, },
     tabBarScroll: { paddingHorizontal: SIZES.padding / 2 },
     tabItem: { paddingVertical: SIZES.radius, paddingHorizontal: SIZES.padding, alignItems: 'center' },
-    tabLabel: { ...FONTS.body4, color: COLORS.mediumGray, fontFamily: 'Inter-SemiBold' },
+    tabLabel: { ...FONTS.body4, color: '#888888', fontFamily: 'Inter-SemiBold' },
     tabLabelActive: { color: COLORS.secondary },
     tabIndicator: { position: 'absolute', bottom: 0, height: 3, width: '60%', backgroundColor: COLORS.secondary, borderRadius: 2 },
     scene: { padding: SIZES.padding, backgroundColor: COLORS.white },
     sectionTitle: { ...FONTS.h3, color: COLORS.text_dark, marginBottom: SIZES.radius },
-    bodyText: { ...FONTS.body4, color: COLORS.text_light, marginBottom: SIZES.base, lineHeight: 22 },
+    bodyText: { ...FONTS.body4, color: '#555555', marginBottom: SIZES.base, lineHeight: 22 },
     separator: { height: 8, width: '100%', backgroundColor: '#F0F2F5', },
     highlightCard: {
         marginTop: SIZES.base, padding: SIZES.padding, borderRadius: SIZES.radius,
@@ -907,10 +958,10 @@ const styles = StyleSheet.create({
         flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: SIZES.base,
     },
     packageItemTitle: { ...FONTS.h4, flex: 1, marginRight: SIZES.base, color: COLORS.text_dark, },
-    itineraryLink: { ...FONTS.body4, color: COLORS.secondary, fontFamily: 'Inter-SemiBold' },
+    itineraryLink: { ...FONTS.body4, color: COLORS.secondary, fontFamily: 'Inter-Semi-Bold' },
     packageInfoLine: { flexDirection: 'row', alignItems: 'center', marginTop: SIZES.base, },
     packageInfoIcon: { width: 16, height: 16, marginRight: SIZES.base, tintColor: COLORS.secondary, },
-    packageInfoText: { ...FONTS.body4, color: COLORS.text_light, },
+    packageInfoText: { ...FONTS.body4, color: '#555555', },
     packageItemFooter: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -922,7 +973,7 @@ const styles = StyleSheet.create({
     },
     packageItemOriginalPriceText: {
         ...FONTS.caption,
-        color: COLORS.text_light,
+        color: '#888888',
     },
     packageItemFinalPrice: {
         ...FONTS.h3,
@@ -934,9 +985,9 @@ const styles = StyleSheet.create({
     chooseButtonText: { ...FONTS.h4, color: COLORS.black, fontFamily: 'Inter-Bold' },
     mapImage: { width: '100%', height: 180, borderRadius: SIZES.radius, backgroundColor: COLORS.lightGray, marginBottom: SIZES.padding },
     locationContainer: { flexDirection: 'row', alignItems: 'flex-start', },
-    locationIcon: { width: 20, height: 20, marginRight: SIZES.base, marginTop: 2, resizeMode: 'contain', tintColor: COLORS.mediumGray },
+    locationIcon: { width: 20, height: 20, marginRight: SIZES.base, marginTop: 2, resizeMode: 'contain', tintColor: '#888888' },
     locationText: { ...FONTS.body3, color: COLORS.text_dark },
-    locationSubText: { ...FONTS.body5, color: COLORS.text_light, marginTop: 4, },
+    locationSubText: { ...FONTS.body5, color: '#888888', marginTop: 4, },
     viewMapButton: { marginTop: SIZES.padding, padding: SIZES.radius, borderWidth: 1, borderColor: COLORS.secondary, borderRadius: SIZES.radius, alignItems: 'center' },
     viewMapButtonText: { ...FONTS.body3, color: COLORS.secondary, fontFamily: 'Inter-Bold' },
     bottomBar: { 
@@ -944,19 +995,19 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between', 
         alignItems: 'center', 
         paddingHorizontal: SIZES.padding, 
-        paddingVertical: SIZES.base, 
+        paddingVertical: SIZES.radius, 
         backgroundColor: COLORS.white, 
         borderTopWidth: 1, 
         borderTopColor: COLORS.border, 
-        paddingBottom: SIZES.padding 
+        paddingBottom: (SIZES.padding || 24) + 16, // PENYESUAIAN PADDING UNTUK NAVIGASI ANDROID
     },
     bottomPriceLabel: { 
         ...FONTS.body5, 
-        color: COLORS.mediumGray 
+        color: COLORS.secondary 
     },
     bottomOriginalPriceText: {
         ...FONTS.body6,
-        color: COLORS.mediumGray,
+        color: COLORS.secondary,
     },
     bottomPriceValue: { 
         ...FONTS.h3, 
@@ -1012,7 +1063,7 @@ const styles = StyleSheet.create({
         flex: 1,
         marginRight: SIZES.padding,
     },
-    totalLabel: { ...FONTS.body4, color: COLORS.text_light, },
+    totalLabel: { ...FONTS.body4, color: '#555555', },
     totalValue: { ...FONTS.h3, fontFamily: 'Inter-Bold', color: COLORS.text_dark, },
     bookButton: { 
         backgroundColor: COLORS.secondary,
@@ -1034,19 +1085,19 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: COLORS.border
     },
-    packageDetailTitle: { ...FONTS.body4, color: COLORS.text_light, marginBottom: 4 },
+    packageDetailTitle: { ...FONTS.body4, color: '#888888', marginBottom: 4 },
     packageDetailName: {
         ...FONTS.h4,
         fontFamily: 'Inter-SemiBold',
         marginBottom: SIZES.base,
         color: COLORS.black,
     },
-    packageDetailInfo: { ...FONTS.body4, color: COLORS.text_light, lineHeight: 20, flexShrink: 1 },
+    packageDetailInfo: { ...FONTS.body4, color: '#555555', lineHeight: 20, flexShrink: 1 },
     packageInfoRow: { flexDirection: 'row', alignItems: 'center', marginBottom: SIZES.base },
-    modalInfoIcon: { width: 16, height: 16, marginRight: SIZES.base, tintColor: COLORS.text_light },
+    modalInfoIcon: { width: 16, height: 16, marginRight: SIZES.base, tintColor: '#888888' },
     guaranteeLine: { flexDirection: 'row', alignItems: 'center', marginTop: SIZES.base, },
     guaranteeIcon: { width: 16, height: 16, marginRight: SIZES.base, tintColor: '#34A853' },
-    guaranteeText: { ...FONTS.body5, color: '#34A853', fontFamily: 'Inter-SemiBold' },
+    guaranteeText: { ...FONTS.body5, color: '#34A853', fontFamily: 'Inter-Semi-Bold' },
     sectionHeaderContainer: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -1059,7 +1110,7 @@ const styles = StyleSheet.create({
         color: COLORS.black,
         marginBottom: SIZES.base,
     },
-    linkText: { ...FONTS.body4, color: COLORS.secondary, fontFamily: 'Inter-SemiBold' },
+    linkText: { ...FONTS.body4, color: COLORS.secondary, fontFamily: 'Inter-Semi-Bold' },
     dateChip: {
         minWidth: 55,
         paddingVertical: 10, 
@@ -1077,7 +1128,7 @@ const styles = StyleSheet.create({
     },
     dateChipText: { 
         ...FONTS.body5, 
-        color: COLORS.text_light, 
+        color: '#555555', 
     },
     dateChipTextSelected: { 
         color: COLORS.white, 
@@ -1096,15 +1147,15 @@ const styles = StyleSheet.create({
         flex: 1,
         marginRight: SIZES.padding,
     },
-    ticketTitle: { ...FONTS.h4, fontFamily: 'Inter-SemiBold', color: COLORS.black },
+    ticketTitle: { ...FONTS.h4, fontFamily: 'Inter-Semi-Bold', color: COLORS.black },
     originalPriceText: {
         ...FONTS.caption,
-        color: COLORS.text_light,
+        color: '#888888',
     },
     finalPrice: { 
         ...FONTS.body3, 
         color: STATUS_COLORS.danger,
-        fontFamily: 'Inter-SemiBold', 
+        fontFamily: 'Inter-Semi-Bold', 
     },
     counterControls: { flexDirection: 'row', alignItems: 'center', },
     counterButton: {
@@ -1124,7 +1175,7 @@ const styles = StyleSheet.create({
     },
     counterValue: { 
         ...FONTS.h3, 
-        fontFamily: 'Inter-SemiBold', 
+        fontFamily: 'Inter-Semi-Bold', 
         marginHorizontal: SIZES.padding, 
         color: COLORS.black
     },
@@ -1138,6 +1189,23 @@ const styles = StyleSheet.create({
         backgroundColor: STATUS_COLORS.danger,
         transform: [{ rotate: '-6deg' }],
         alignSelf: 'center',
+    },
+    itineraryItem: {
+        marginBottom: SIZES.base * 2,
+        padding: SIZES.padding,
+        backgroundColor: '#F7F7F7',
+        borderRadius: SIZES.radius,
+    },
+    itineraryDay: {
+        ...FONTS.h4,
+        fontFamily: 'Inter-SemiBold',
+        color: COLORS.text_dark,
+        marginBottom: SIZES.base,
+    },
+    itineraryDescription: {
+        ...FONTS.body4,
+        color: '#555555',
+        lineHeight: 22,
     },
 });
 
