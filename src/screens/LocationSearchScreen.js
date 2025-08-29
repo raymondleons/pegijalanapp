@@ -1,445 +1,518 @@
-// src/screens/LocationPickerScreen.js
-import React, { useState, useRef, useEffect } from 'react';
+// src/screens/LocationSearchScreen.js
+import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   View,
-  TouchableOpacity,
   Text,
-  Platform,
-  PermissionsAndroid, // Tetap di-import meskipun tidak dipakai langsung, untuk jaga-jaga
-  Alert,
+  TextInput,
+  FlatList,
+  TouchableOpacity,
+  ActivityIndicator,
+  Keyboard,
   Image,
   Animated,
+  Alert,
+  PermissionsAndroid,
+  Platform,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
-import Geolocation from '@react-native-community/geolocation'; // Tetap di-import meskipun tidak dipakai langsung
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import Geolocation from '@react-native-community/geolocation';
 
-// GANTI DENGAN API KEY ANDA
+// Diasumsikan ini adalah palet warna dari theme.js Anda
+const COLORS = {
+    primary: '#0064d2',
+    white: '#FFFFFF',
+    black: '#333333',
+    lightGray: '#F5F5F5',
+    gray: '#E0E0E0',
+    darkGray: '#666666',
+};
+
 const GOOGLE_MAPS_API_KEY = 'AIzaSyCOPdSzFR6e9UEhIuqt-5U7SkgCKJnHIgs';
 
-// Style peta kustom
-const customMapStyle = [
-  { featureType: 'poi.business', stylers: [{ visibility: 'off' }] },
-  { featureType: 'transit', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-];
+const BATAM_REGION = {
+  latitude: 1.1073,
+  longitude: 104.0304,
+  latitudeDelta: 0.2,
+  longitudeDelta: 0.2,
+};
 
-const SkeletonLoader = () => (
-  <View style={styles.locationInfoBox}>
-    <View style={styles.locationIcon}>
-      <Image
-        source={require('../assets/icons/black-circle.png')}
-        style={styles.locationIconImage}
-        resizeMode="contain"
-      />
-    </View>
-    <View style={styles.locationTextContainer}>
-      <View style={styles.skeletonTitle} />
-      <View style={styles.skeletonAddress} />
-    </View>
-  </View>
-);
+const SEARCH_BAR_HEIGHT = 50;
+const SEARCH_BAR_PADDING = 16;
 
-const LocationPickerScreen = ({ navigation, route }) => {
+const LocationSearchScreen = ({ navigation, route }) => {
+  const { onSelect } = route.params || {};
   const insets = useSafeAreaInsets();
-
-  const [initialRegion, setInitialRegion] = useState(null);
-  const [currentUserPosition, setCurrentUserPosition] = useState(null);
-  const [locationInfo, setLocationInfo] = useState({ title: 'Memuat...', address: '...' });
-  const [isMapReady, setIsMapReady] = useState(false);
-  const [isMoving, setIsMoving] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-
   const mapRef = useRef(null);
-  const rotationValue = useRef(new Animated.Value(0)).current;
+  const debounceTimeout = useRef(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [predictions, setPredictions] = useState([]);
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [region, setRegion] = useState(BATAM_REGION);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isGettingLocation, setIsGettingLocation] = useState(true);
+  const slideAnim = useRef(new Animated.Value(300)).current;
+
+  // Minta izin lokasi dan dapatkan posisi pengguna
+  useEffect(() => {
+    requestLocationPermission();
+  }, []);
+
+  const requestLocationPermission = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          {
+            title: 'Izin Akses Lokasi',
+            message: 'Aplikasi memerlukan akses lokasi untuk menampilkan posisi Anda',
+            buttonNeutral: 'Tanya Nanti',
+            buttonNegative: 'Batal',
+            buttonPositive: 'Izinkan',
+          }
+        );
+        if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+          getCurrentLocation();
+        } else {
+          setIsGettingLocation(false);
+          Alert.alert('Izin Ditolak', 'Tidak dapat mengakses lokasi tanpa izin');
+        }
+      } catch (err) {
+        console.warn(err);
+        setIsGettingLocation(false);
+      }
+    } else {
+      // Untuk iOS, langsung panggil getCurrentLocation
+      getCurrentLocation();
+    }
+  };
+
+  const getCurrentLocation = () => {
+    setIsGettingLocation(true);
+    Geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        const myLocation = {
+          name: 'Lokasi Saya',
+          address: 'Mendapatkan alamat...',
+          coordinate: { latitude, longitude },
+        };
+        setSelectedLocation(myLocation);
+        const newRegion = { ...myLocation.coordinate, latitudeDelta: 0.02, longitudeDelta: 0.02 };
+        setRegion(newRegion);
+        if (mapRef.current) {
+          mapRef.current.animateToRegion(newRegion, 1000);
+        }
+        fetchAddressFromCoords(myLocation.coordinate);
+        setIsGettingLocation(false);
+      },
+      (error) => {
+        setIsGettingLocation(false);
+        Alert.alert(
+          'Gagal Mendapatkan Lokasi', 
+          'Pastikan layanan lokasi (GPS) Anda aktif dan izin telah diberikan.'
+        );
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+    );
+  };
 
   useEffect(() => {
-    if (isMoving) {
-      Animated.loop(
-        Animated.timing(rotationValue, {
-          toValue: 1,
-          duration: 1000,
-          useNativeDriver: true,
-        })
-      ).start();
+    if (selectedLocation) {
+      Animated.timing(slideAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
     } else {
-      rotationValue.stopAnimation();
-      rotationValue.setValue(0);
+      Animated.timing(slideAnim, { toValue: 300, duration: 300, useNativeDriver: true }).start();
     }
-  }, [isMoving]);
-
-  const fetchLocationDetails = async (latitude, longitude) => {
+  }, [selectedLocation]);
+  
+  const fetchAutocompletePredictions = async (query) => {
+    if (query.length < 3) { setPredictions([]); return; }
     setIsLoading(true);
+    const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&key=${GOOGLE_MAPS_API_KEY}&components=country:ID&language=id`;
     try {
-      const response = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}`
-      );
+      const response = await fetch(url);
       const data = await response.json();
+      if (data.status === 'OK') { setPredictions(data.predictions); } else { setPredictions([]); }
+    } catch (error) { console.error('Error fetching autocomplete:', error); } finally { setIsLoading(false); }
+  };
 
-      if (data.status === 'OK' && data.results.length > 0) {
-        const result = data.results[0];
-        const address = result.formatted_address;
+  useEffect(() => {
+    if (debounceTimeout.current) { clearTimeout(debounceTimeout.current); }
+    debounceTimeout.current = setTimeout(() => {
+      if (searchQuery) { fetchAutocompletePredictions(searchQuery); } else { setPredictions([]); }
+    }, 500);
+    return () => clearTimeout(debounceTimeout.current);
+  }, [searchQuery]);
 
-        let areaTitle = '';
-        const routeComponent = result.address_components.find(c => c.types.includes('route'));
-        const neighborhoodComponent = result.address_components.find(c => c.types.includes('neighborhood'));
-        const sublocalityComponent = result.address_components.find(c => c.types.includes('sublocality'));
-
-        if (routeComponent) {
-          areaTitle = routeComponent.long_name;
-        } else if (neighborhoodComponent) {
-          areaTitle = neighborhoodComponent.long_name;
-        } else if (sublocalityComponent) {
-          areaTitle = sublocalityComponent.long_name;
-        } else {
-          areaTitle = address.split(',')[0];
-        }
-
-        setLocationInfo({
-          title: areaTitle,
-          address: address,
-        });
-      } else {
-        setLocationInfo({
-          title: 'Lokasi Tidak Dikenal',
-          address: `Lat: ${latitude.toFixed(5)}, Lon: ${longitude.toFixed(5)}`,
-        });
+  const onPredictionPress = async (placeId) => {
+    Keyboard.dismiss();
+    setIsLoading(true);
+    setSearchQuery('');
+    setPredictions([]);
+    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${GOOGLE_MAPS_API_KEY}&fields=name,formatted_address,geometry&language=id`;
+    try {
+      const response = await fetch(url);
+      const data = await response.json();
+      if (data.status === 'OK') {
+        const { location } = data.result.geometry;
+        const newLocation = {
+          name: data.result.name,
+          address: data.result.formatted_address,
+          coordinate: { latitude: location.lat, longitude: location.lng },
+        };
+        setSelectedLocation(newLocation);
+        const newRegion = { ...newLocation.coordinate, latitudeDelta: 0.02, longitudeDelta: 0.02 };
+        mapRef.current?.animateToRegion(newRegion, 1000);
       }
-    } catch (error) {
-      console.error('Error fetching address:', error);
-      setLocationInfo({
-        title: 'Gagal Memuat',
-        address: 'Periksa koneksi internet Anda.',
-      });
-    } finally {
-      setIsLoading(false);
-    }
+    } catch (error) { console.error('Error fetching place details:', error); } finally { setIsLoading(false); }
+  };
+
+  const onMapPress = (event) => {
+    const tappedCoordinate = event.nativeEvent.coordinate;
+    const placeholderLocation = {
+      name: 'Lokasi Pilihan',
+      address: 'Mendapatkan alamat...',
+      coordinate: tappedCoordinate,
+    };
+    setSelectedLocation(placeholderLocation);
+    fetchAddressFromCoords(tappedCoordinate);
   };
   
-  // =================================================================
-  // MODIFIKASI UTAMA DIMULAI DI SINI
-  // =================================================================
-  // GANTI DENGAN BLOK INI
-useEffect(() => {
-    const requestLocationPermission = async () => {
-      let granted = false;
-      if (Platform.OS === 'android') {
-        const result = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
-        if (result === PermissionsAndroid.RESULTS.GRANTED) granted = true;
-      } else {
-        granted = true; // Untuk iOS, izin ditangani secara berbeda
-      }
-
-      if (granted) {
-        Geolocation.getCurrentPosition(
-          (position) => {
-            const { latitude, longitude } = position.coords;
-            const region = { latitude, longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 };
-
-            setInitialRegion(region);
-            setCurrentUserPosition({ latitude, longitude });
-            fetchLocationDetails(latitude, longitude);
-
-            if (mapRef.current) {
-              mapRef.current.animateToRegion(region, 1000);
-            }
-          },
-          (error) => {
-            Alert.alert('Gagal Mendapatkan Lokasi', 'Pastikan layanan lokasi Anda aktif. Menggunakan lokasi default Batam.');
-            const defaultRegion = { latitude: 1.1073, longitude: 104.0304, latitudeDelta: 0.1, longitudeDelta: 0.1 };
-            setInitialRegion(defaultRegion);
-            fetchLocationDetails(defaultRegion.latitude, defaultRegion.longitude);
-          },
-          { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
-        );
-
-        const watchId = Geolocation.watchPosition(
-          (position) => {
-            const { latitude, longitude } = position.coords;
-            setCurrentUserPosition({ latitude, longitude });
-          },
-          (error) => console.log('WatchPosition Error:', error),
-          { enableHighAccuracy: true, distanceFilter: 10, interval: 5000 }
-        );
-        return () => Geolocation.clearWatch(watchId);
-        
-      } else {
-        Alert.alert('Izin Ditolak', 'Aplikasi tidak dapat mengakses lokasi. Menggunakan lokasi default Batam.');
-        const defaultRegion = { latitude: 1.1073, longitude: 104.0304, latitudeDelta: 0.1, longitudeDelta: 0.1 };
-        setInitialRegion(defaultRegion);
-        fetchLocationDetails(defaultRegion.latitude, defaultRegion.longitude);
-      }
-    };
-
-    requestLocationPermission();
-}, []); // Array dependensi kosong memastikan ini hanya berjalan sekali saat komponen dimuat
-  // =================================================================
-  // MODIFIKASI UTAMA SELESAI
-  // =================================================================
-
+  const hideDetailsCard = () => {
+    setSelectedLocation(null);
+  };
+  
+  const handleGoBack = () => {
+    if (navigation) {
+      navigation.goBack();
+    }
+  };
 
   const goToMyLocation = () => {
-    // Sekarang fungsi ini akan mengembalikan peta ke pusat Batam
-    if (currentUserPosition && mapRef.current) {
-      mapRef.current.animateToRegion({
-        ...currentUserPosition,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      }, 1000);
-      fetchLocationDetails(currentUserPosition.latitude, currentUserPosition.longitude);
+    getCurrentLocation();
+  };
+
+  // Fungsi yang diperbaiki untuk mendapatkan alamat dari koordinat
+  const fetchAddressFromCoords = async ({ latitude, longitude }) => {
+    // Tampilkan koordinat sementara sambil menunggu alamat
+    const tempAddress = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+    setSelectedLocation(prev => ({
+      ...prev,
+      address: tempAddress
+    }));
+    
+    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}&language=id`;
+    
+    try {
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (data.status === 'OK' && data.results[0]) {
+        const address = data.results[0].formatted_address;
+        const name = data.results[0].address_components[0]?.long_name || 'Lokasi Dipilih';
+        
+        setSelectedLocation(prev => ({
+          ...prev,
+          name: name,
+          address: address,
+          coordinate: { latitude, longitude }
+        }));
+      }
+    } catch (error) { 
+      console.error("Error fetching address from coords:", error);
+      // Jika gagal, tetap tampilkan koordinat
+      setSelectedLocation(prev => ({
+        ...prev,
+        name: 'Lokasi Dipilih',
+        address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
+      }));
     }
   };
 
-  const rotate = rotationValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '360deg'],
-  });
-
-  const handleContinue = () => {
-    if (route.params && route.params.onSelect) {
-      route.params.onSelect(locationInfo.address);
+  const handleSelectLocation = () => {
+    if (selectedLocation && onSelect) {
+      onSelect(selectedLocation.address);
       navigation.goBack();
-    } else {
-      Alert.alert("Lanjut", `Lokasi dipilih: ${locationInfo.address}`);
+    } else if (selectedLocation) {
+      Alert.alert("Info", `Lokasi dipilih: ${selectedLocation.address}`);
     }
   };
 
-  const getCardTitle = () => {
-    if (route.params && route.params.target === 'to') {
-      return 'Set lokasi tujuan';
-    }
-    return 'Set lokasi jemput';
-  };
+  const predictionListTop = insets.top + SEARCH_BAR_HEIGHT + (SEARCH_BAR_PADDING * 2);
+
+  // Komponen Pin Kustom yang lebih sederhana
+  const CustomMarker = () => (
+    <View style={styles.customMarker}>
+      <View style={styles.markerPin}>
+        <View style={styles.markerDot} />
+      </View>
+    </View>
+  );
 
   return (
     <View style={styles.container}>
-      {initialRegion && ( // Tambahkan pengecekan ini agar peta tidak render sebelum region siap
-        <MapView
-          ref={mapRef}
-          style={styles.map}
-          initialRegion={initialRegion}
-          customMapStyle={customMapStyle}
-          onMapReady={() => setIsMapReady(true)}
-          onRegionChange={() => {
-            if (!isMoving) setIsMoving(true);
-            if (!isLoading) setIsLoading(true);
-          }}
-          onRegionChangeComplete={(region) => {
-            if (isMoving) {
-              setIsMoving(false);
-              fetchLocationDetails(region.latitude, region.longitude);
-            }
-          }}
-          showsUserLocation={false}
-          showsMyLocationButton={false}
-        >
-          {currentUserPosition && (
-            <Marker coordinate={currentUserPosition} anchor={{ x: 0.5, y: 0.5 }}>
-              <View style={styles.userLocationMarker} />
-            </Marker>
-          )}
-        </MapView>
+      <View style={[styles.searchContainer, { paddingTop: insets.top + SEARCH_BAR_PADDING }]}>
+        <TouchableOpacity style={styles.backButton} onPress={handleGoBack}>
+          <Image source={require('../assets/icons/chevron_left.png')} style={styles.iconImage} />
+        </TouchableOpacity>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Cari nama tempat atau alamat..."
+          placeholderTextColor={COLORS.darkGray}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        {isLoading && <ActivityIndicator style={styles.loader} color={COLORS.primary} />}
+      </View>
+      
+      {isGettingLocation && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={styles.loadingText}>Mendapatkan lokasi Anda...</Text>
+        </View>
       )}
       
-      <Animated.View style={[styles.pickupMarkerContainer, { transform: [{ translateY: -54 }, { rotate }] }]}>
-        <View style={styles.pickupMarker}>
-          <Image
-            source={isMoving ? require('../assets/icons/refresh.png') : require('../assets/icons/arrow-small-up.png')}
-            style={styles.pickupIconImage}
-            resizeMode="contain"
-          />
-        </View>
-        <View style={styles.pickupMarkerPin} />
-        <View style={styles.pickupMarkerBottomCircle} />
-      </Animated.View>
-
-      <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-        <Image 
-          source={require('../assets/icons/chevron_left.png')} 
-          style={styles.backButtonImage} 
-          resizeMode="contain" 
+      <MapView
+        ref={mapRef}
+        style={styles.map}
+        provider={PROVIDER_GOOGLE}
+        initialRegion={BATAM_REGION}
+        region={region}
+        onRegionChangeComplete={setRegion}
+        showsUserLocation={true}
+        showsMyLocationButton={false}
+        onPress={onMapPress}
+      >
+        {selectedLocation && (
+          <Marker
+            coordinate={selectedLocation.coordinate}
+            anchor={{ x: 0.5, y: 1 }}
+          >
+            <View style={{width: 30, height: 30, backgroundColor: COLORS.primary, borderRadius: 15, borderWidth: 2, borderColor: 'white'}} />
+          </Marker>
+        )}
+      </MapView>
+      
+      {predictions.length > 0 && (
+        <FlatList
+          data={predictions}
+          keyExtractor={(item) => item.place_id}
+          renderItem={({ item }) => (
+            <TouchableOpacity style={styles.predictionItem} onPress={() => onPredictionPress(item.place_id)}>
+              <Text style={styles.predictionMainText}>{item.structured_formatting.main_text}</Text>
+              <Text style={styles.predictionSecondaryText}>{item.structured_formatting.secondary_text}</Text>
+            </TouchableOpacity>
+          )}
+          style={[styles.predictionsContainer, { top: predictionListTop }]}
         />
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.myLocationButton} onPress={goToMyLocation}>
-        <Image 
-          source={require('../assets/icons/my_location.png')} 
-          style={styles.myLocationButtonImage} 
-          resizeMode="contain" 
-        />
+      )}
+      
+      <TouchableOpacity style={[styles.currentLocationButton, { bottom: insets.bottom + (selectedLocation ? 180 : 20) }]} onPress={goToMyLocation}>
+        <Image source={require('../assets/icons/my_location.png')} style={styles.iconImage} />
       </TouchableOpacity>
       
-      <View style={[styles.backCard, { bottom: 10 + insets.bottom }]} />
-
-      <View style={[styles.bottomCard, { paddingBottom: 20 + insets.bottom }]}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>{getCardTitle()}</Text>
-          <TouchableOpacity>
-            <Text style={styles.editButtonText}>Edit</Text>
-          </TouchableOpacity>
-        </View>
-        
-        {isLoading ? (
-          <SkeletonLoader />
-        ) : (
-          <View style={styles.locationInfoBox}>
-            <View style={styles.locationIcon}>
-              <Image 
-                source={require('../assets/icons/black-circle.png')} 
-                style={styles.locationIconImage} 
-                resizeMode="contain" 
-              />
+      <Animated.View style={[
+        styles.bottomCard, { paddingBottom: insets.bottom + 16, transform: [{ translateY: slideAnim }] }
+      ]}>
+        {selectedLocation && (
+          <>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle} numberOfLines={1}>{selectedLocation.name}</Text>
+              <TouchableOpacity onPress={hideDetailsCard} style={styles.closeButton}>
+                <Text style={styles.closeButtonText}>X</Text>
+              </TouchableOpacity>
             </View>
-            <View style={styles.locationTextContainer}>
-              <Text style={styles.locationTitle}>{locationInfo.title}</Text>
-              <Text style={styles.locationAddress} numberOfLines={1}>{locationInfo.address}</Text>
-            </View>
-          </View>
+            <Text style={styles.cardAddress} numberOfLines={2}>{selectedLocation.address}</Text>
+            <TouchableOpacity style={styles.selectButton} onPress={handleSelectLocation}>
+              <Text style={styles.selectButtonText}>Pilih Lokasi Ini</Text>
+            </TouchableOpacity>
+          </>
         )}
-        
-        <TouchableOpacity style={styles.continueButton} onPress={handleContinue}>
-          <Text style={styles.continueButtonText}>Lanjut</Text>
-        </TouchableOpacity>
-      </View>
+      </Animated.View>
     </View>
   );
 };
 
-
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  map: { ...StyleSheet.absoluteFillObject },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-
-  userLocationMarker: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: 'rgba(0, 122, 255, 1)',
-    borderWidth: 3,
-    borderColor: '#FFF',
+  container: { 
+    flex: 1, 
+    backgroundColor: COLORS.white 
   },
-
-  pickupMarkerContainer: {
+  searchContainer: {
     position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: [{ translateX: -22 }],
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10, // Z-index lebih tinggi
+    backgroundColor: COLORS.white,
+    paddingHorizontal: 16,
+    paddingBottom: SEARCH_BAR_PADDING,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.gray,
+    flexDirection: 'row',
     alignItems: 'center',
   },
-  pickupMarker: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#0064d2',
-    borderWidth: 4,
-    borderColor: '#FFF',
+  searchInput: {
+    flex: 1,
+    height: SEARCH_BAR_HEIGHT,
+    backgroundColor: COLORS.lightGray,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    fontSize: 16,
+    color: COLORS.black,
+  },
+  backButton: {
+    padding: 10,
+    marginRight: 8,
+  },
+  iconImage: {
+    width: 24,
+    height: 24,
+    tintColor: COLORS.darkGray,
+  },
+  loader: {
+    position: 'absolute',
+    right: 32,
+    top: '50%',
+    marginTop: -10, // Pusatkan vertikal
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 10,
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: COLORS.darkGray,
+  },
+  predictionsContainer: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    backgroundColor: COLORS.white,
+    borderRadius: 10,
+    elevation: 5,
+    zIndex: 10, // Z-index lebih tinggi
+    maxHeight: 250,
+  },
+  predictionItem: { 
+    padding: 16, 
+    borderBottomWidth: 1, 
+    borderBottomColor: COLORS.lightGray 
+  },
+  predictionMainText: { 
+    fontSize: 16, 
+    fontWeight: 'bold', 
+    color: COLORS.black 
+  },
+  predictionSecondaryText: { 
+    fontSize: 14, 
+    color: COLORS.darkGray 
+  },
+  map: { 
+    flex: 1 
+  },
+  // Gaya untuk pin kustom yang lebih sederhana
+  customMarker: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  markerPin: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary,
+    borderWidth: 3,
+    borderColor: 'white',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 3,
     elevation: 5,
   },
-  pickupIconImage: {
-    width: 34,
-    height: 34,
-    tintColor: '#FFF',
+  markerDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: 'white',
   },
-  pickupMarkerPin: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 6,
-    borderRightWidth: 6,
-    borderTopWidth: 12,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderTopColor: '#FFF',
-    marginTop: -2,
-  },
-  pickupMarkerBottomCircle: {
-    width: 7,
-    height: 7,
-    borderRadius: 5,
-    backgroundColor: '#0064d2',
-    marginTop: 1,
-  },
-
-  backButton: { 
-    position: 'absolute', 
-    bottom: 280, 
-    left: 20, 
-    backgroundColor: '#FFF', 
-    borderRadius: 20, 
-    width: 40, 
-    height: 40, 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    elevation: 4 
-  },
-  backButtonImage: { width: 20, height: 20, tintColor: '#353535ff' },
-  myLocationButton: { 
-    position: 'absolute', 
-    bottom: 280,
-    right: 20, 
-    backgroundColor: '#FFF', 
-    borderRadius: 20, 
-    width: 40, 
-    height: 40, 
-    justifyContent: 'center', 
-    alignItems: 'center', 
-    elevation: 4 
-  },
-  myLocationButtonImage: { width: 20, height: 20, tintColor: '#353535ff' },
-  
-  backCard: {
+  bottomCard: {
     position: 'absolute',
-    left: 10,
-    right: 10,
-    height: 60,
-    backgroundColor: '#F5F5F5',
-    borderRadius: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 16,
+    elevation: 10,
+    shadowColor: COLORS.black,
+    shadowOffset: { width: 0, height: -3 },
     shadowOpacity: 0.1,
-    shadowRadius: 5,
-    elevation: 3,
-    zIndex: 5,
+    shadowRadius: 4,
+    zIndex: 10 // Z-index lebih tinggi
   },
-
-  bottomCard: { 
-    position: 'absolute', 
-    bottom: 0, 
-    left: 0, 
-    right: 0, 
-    backgroundColor: '#FFF', 
-    borderTopLeftRadius: 20, 
-    borderTopRightRadius: 20, 
-    padding: 20,
-    elevation: 10, 
-    zIndex: 10 
+  cardHeader: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    marginBottom: 8 
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
-  cardTitle: { fontSize: 18, fontWeight: 'bold', color: '#333' },
-  editButtonText: { fontSize: 16, fontWeight: '600', color: '#0064d2' },
-  locationInfoBox: { backgroundColor: '#F0FFF8', borderRadius: 10, padding: 15, flexDirection: 'row', alignItems: 'center', marginBottom: 20, borderWidth: 1, borderColor: '#D6F5E9' },
-  locationIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#0064d2', justifyContent: 'center', alignItems: 'center', marginRight: 15 },
-  locationIconImage: { width: 10, height: 10, tintColor: '#FFF' },
-  locationTextContainer: { flex: 1 },
-  locationTitle: { fontSize: 16, fontWeight: 'bold', color: '#333' },
-  locationAddress: { fontSize: 14, color: '#666' },
-  continueButton: { backgroundColor: '#0064d2', borderRadius: 25, paddingVertical: 15, alignItems: 'center' },
-  continueButtonText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
-
-  skeletonTitle: {
-    height: 16,
-    width: '70%',
-    backgroundColor: '#E0E0E0',
-    borderRadius: 4,
-    marginBottom: 8,
+  cardTitle: { 
+    fontSize: 20, 
+    fontWeight: 'bold', 
+    color: COLORS.black, 
+    flex: 1 
   },
-  skeletonAddress: {
-    height: 14,
-    width: '90%',
-    backgroundColor: '#E0E0E0',
-    borderRadius: 4,
+  closeButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: COLORS.lightGray,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 10
+  },
+  closeButtonText: { 
+    fontSize: 16, 
+    fontWeight: 'bold', 
+    color: COLORS.darkGray 
+  },
+  cardAddress: { 
+    fontSize: 14, 
+    color: COLORS.darkGray, 
+    marginBottom: 16 
+  },
+  selectButton: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 14,
+    borderRadius: 25,
+    alignItems: 'center'
+  },
+  selectButtonText: { 
+    color: COLORS.white, 
+    fontSize: 16, 
+    fontWeight: 'bold' 
+  },
+  currentLocationButton: {
+    position: 'absolute',
+    right: 20,
+    backgroundColor: COLORS.white,
+    padding: 12,
+    borderRadius: 25,
+    elevation: 5,
+    shadowColor: COLORS.black,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    zIndex: 10, // Z-index lebih tinggi
   },
 });
 
-export default LocationPickerScreen;
+export default LocationSearchScreen;
