@@ -51,15 +51,26 @@ const LocationSearchScreen = ({ navigation, route }) => {
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [region, setRegion] = useState(BATAM_REGION);
   const [isLoading, setIsLoading] = useState(false);
-  const [isGettingLocation, setIsGettingLocation] = useState(true);
+  const [isGettingLocation, setIsGettingLocation] = useState(false); // Diubah ke false awal
   const slideAnim = useRef(new Animated.Value(300)).current;
+  const watchId = useRef(null);
 
   // Minta izin lokasi dan dapatkan posisi pengguna
   useEffect(() => {
     requestLocationPermission();
+    
+    // Cleanup watch position ketika komponen unmount
+    return () => {
+      if (watchId.current !== null) {
+        Geolocation.clearWatch(watchId.current);
+      }
+    };
   }, []);
 
   const requestLocationPermission = async () => {
+    // Langsung coba dapatkan lokasi tanpa menunggu izin (akan fallback ke cached location)
+    getCurrentLocation();
+    
     if (Platform.OS === 'android') {
       try {
         const granted = await PermissionsAndroid.request(
@@ -73,49 +84,77 @@ const LocationSearchScreen = ({ navigation, route }) => {
           }
         );
         if (granted === PermissionsAndroid.RESULTS.GRANTED) {
-          getCurrentLocation();
-        } else {
-          setIsGettingLocation(false);
-          Alert.alert('Izin Ditolak', 'Tidak dapat mengakses lokasi tanpa izin');
+          // Jika izin diberikan, dapatkan lokasi yang lebih akurat
+          getAccurateLocation();
         }
       } catch (err) {
         console.warn(err);
-        setIsGettingLocation(false);
       }
-    } else {
-      // Untuk iOS, langsung panggil getCurrentLocation
-      getCurrentLocation();
     }
   };
 
+  // Fungsi untuk mendapatkan lokasi cepat (menggunakan cache)
   const getCurrentLocation = () => {
     setIsGettingLocation(true);
+    
     Geolocation.getCurrentPosition(
       (position) => {
-        const { latitude, longitude } = position.coords;
-        const myLocation = {
-          name: 'Lokasi Saya',
-          address: 'Mendapatkan alamat...',
-          coordinate: { latitude, longitude },
-        };
-        setSelectedLocation(myLocation);
-        const newRegion = { ...myLocation.coordinate, latitudeDelta: 0.02, longitudeDelta: 0.02 };
-        setRegion(newRegion);
-        if (mapRef.current) {
-          mapRef.current.animateToRegion(newRegion, 1000);
-        }
-        fetchAddressFromCoords(myLocation.coordinate);
-        setIsGettingLocation(false);
+        handleLocationSuccess(position);
+      },
+      (error) => {
+        // Jika gagal dengan cached location, coba dapatkan lokasi yang lebih akurat
+        getAccurateLocation();
+      },
+      { 
+        timeout: 5000, // Timeout lebih pendek
+        maximumAge: 300000, // Gunakan cached location hingga 5 menit
+        enableHighAccuracy: false // Tidak perlu high accuracy untuk cepat
+      }
+    );
+  };
+
+  // Fungsi untuk mendapatkan lokasi yang lebih akurat
+  const getAccurateLocation = () => {
+    Geolocation.getCurrentPosition(
+      (position) => {
+        handleLocationSuccess(position);
       },
       (error) => {
         setIsGettingLocation(false);
+        // Tetap lanjutkan meskipun gagal dapatkan lokasi
         Alert.alert(
-          'Gagal Mendapatkan Lokasi', 
-          'Pastikan layanan lokasi (GPS) Anda aktif dan izin telah diberikan.'
+          'Info', 
+          'Tidak dapat mendapatkan lokasi saat ini. Anda tetap dapat memilih lokasi secara manual.'
         );
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
+      { 
+        enableHighAccuracy: true, 
+        timeout: 10000, 
+        maximumAge: 0 
+      }
     );
+  };
+
+  // Handler untuk keberhasilan mendapatkan lokasi
+  const handleLocationSuccess = (position) => {
+    const { latitude, longitude } = position.coords;
+    const myLocation = {
+      name: 'Lokasi Saya',
+      address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
+      coordinate: { latitude, longitude },
+    };
+    
+    setSelectedLocation(myLocation);
+    const newRegion = { ...myLocation.coordinate, latitudeDelta: 0.02, longitudeDelta: 0.02 };
+    setRegion(newRegion);
+    
+    if (mapRef.current) {
+      mapRef.current.animateToRegion(newRegion, 1000);
+    }
+    
+    // Dapatkan alamat di background tanpa menunggu
+    fetchAddressFromCoords(myLocation.coordinate);
+    setIsGettingLocation(false);
   };
 
   useEffect(() => {
@@ -172,7 +211,7 @@ const LocationSearchScreen = ({ navigation, route }) => {
     const tappedCoordinate = event.nativeEvent.coordinate;
     const placeholderLocation = {
       name: 'Lokasi Pilihan',
-      address: 'Mendapatkan alamat...',
+      address: `${tappedCoordinate.latitude.toFixed(6)}, ${tappedCoordinate.longitude.toFixed(6)}`,
       coordinate: tappedCoordinate,
     };
     setSelectedLocation(placeholderLocation);
@@ -195,13 +234,6 @@ const LocationSearchScreen = ({ navigation, route }) => {
 
   // Fungsi yang diperbaiki untuk mendapatkan alamat dari koordinat
   const fetchAddressFromCoords = async ({ latitude, longitude }) => {
-    // Tampilkan koordinat sementara sambil menunggu alamat
-    const tempAddress = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
-    setSelectedLocation(prev => ({
-      ...prev,
-      address: tempAddress
-    }));
-    
     const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}&language=id`;
     
     try {
@@ -221,12 +253,7 @@ const LocationSearchScreen = ({ navigation, route }) => {
       }
     } catch (error) { 
       console.error("Error fetching address from coords:", error);
-      // Jika gagal, tetap tampilkan koordinat
-      setSelectedLocation(prev => ({
-        ...prev,
-        name: 'Lokasi Dipilih',
-        address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
-      }));
+      // Tetap gunakan koordinat jika gagal mendapatkan alamat
     }
   };
 
@@ -240,15 +267,6 @@ const LocationSearchScreen = ({ navigation, route }) => {
   };
 
   const predictionListTop = insets.top + SEARCH_BAR_HEIGHT + (SEARCH_BAR_PADDING * 2);
-
-  // Komponen Pin Kustom yang lebih sederhana
-  const CustomMarker = () => (
-    <View style={styles.customMarker}>
-      <View style={styles.markerPin}>
-        <View style={styles.markerDot} />
-      </View>
-    </View>
-  );
 
   return (
     <View style={styles.container}>
@@ -287,9 +305,14 @@ const LocationSearchScreen = ({ navigation, route }) => {
         {selectedLocation && (
           <Marker
             coordinate={selectedLocation.coordinate}
-            anchor={{ x: 0.5, y: 1 }}
+            title={selectedLocation.name}
+            description={selectedLocation.address}
           >
-            <View style={{width: 30, height: 30, backgroundColor: COLORS.primary, borderRadius: 15, borderWidth: 2, borderColor: 'white'}} />
+            <View style={styles.markerContainer}>
+              <View style={styles.markerCircle}>
+                <View style={styles.markerInnerCircle} />
+              </View>
+            </View>
           </Marker>
         )}
       </MapView>
@@ -344,7 +367,7 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    zIndex: 10, // Z-index lebih tinggi
+    zIndex: 10,
     backgroundColor: COLORS.white,
     paddingHorizontal: 16,
     paddingBottom: SEARCH_BAR_PADDING,
@@ -375,7 +398,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 32,
     top: '50%',
-    marginTop: -10, // Pusatkan vertikal
+    marginTop: -10,
   },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -396,7 +419,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     borderRadius: 10,
     elevation: 5,
-    zIndex: 10, // Z-index lebih tinggi
+    zIndex: 10,
     maxHeight: 250,
   },
   predictionItem: { 
@@ -416,15 +439,14 @@ const styles = StyleSheet.create({
   map: { 
     flex: 1 
   },
-  // Gaya untuk pin kustom yang lebih sederhana
-  customMarker: {
+  markerContainer: {
     alignItems: 'center',
     justifyContent: 'center',
   },
-  markerPin: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  markerCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: COLORS.primary,
     borderWidth: 3,
     borderColor: 'white',
@@ -436,10 +458,10 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 5,
   },
-  markerDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+  markerInnerCircle: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: 'white',
   },
   bottomCard: {
@@ -456,7 +478,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -3 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
-    zIndex: 10 // Z-index lebih tinggi
+    zIndex: 10
   },
   cardHeader: { 
     flexDirection: 'row', 
@@ -511,7 +533,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 3,
-    zIndex: 10, // Z-index lebih tinggi
+    zIndex: 10,
   },
 });
 
