@@ -7,13 +7,13 @@ import {
   TextInput,
   FlatList,
   TouchableOpacity,
-  ActivityIndicator,
   Keyboard,
   Image,
   Animated,
   Alert,
   PermissionsAndroid,
   Platform,
+  Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -40,9 +40,27 @@ const BATAM_REGION = {
 
 const SEARCH_BAR_HEIGHT = 50;
 const SEARCH_BAR_PADDING = 16;
+const { width, height } = Dimensions.get('window');
+const BOTTOM_CARD_HEIGHT = 200; // Perkiraan tinggi card bawah
+
+const SkeletonLoader = () => (
+  <View style={styles.locationInfoBox}>
+    <View style={styles.locationIcon}>
+      <Image
+        source={require('../assets/icons/black-circle.png')}
+        style={styles.locationIconImage}
+        resizeMode="contain"
+      />
+    </View>
+    <View style={styles.locationTextContainer}>
+      <View style={styles.skeletonTitle} />
+      <View style={styles.skeletonAddress} />
+    </View>
+  </View>
+);
 
 const LocationSearchScreen = ({ navigation, route }) => {
-  const { onSelect } = route.params || {};
+  const { onSelect, target } = route.params || {};
   const insets = useSafeAreaInsets();
   const mapRef = useRef(null);
   const debounceTimeout = useRef(null);
@@ -51,21 +69,43 @@ const LocationSearchScreen = ({ navigation, route }) => {
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [region, setRegion] = useState(BATAM_REGION);
   const [isLoading, setIsLoading] = useState(false);
-  const [isGettingLocation, setIsGettingLocation] = useState(false); // Diubah ke false awal
-  const slideAnim = useRef(new Animated.Value(300)).current;
+  const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const slideAnim = useRef(new Animated.Value(BOTTOM_CARD_HEIGHT)).current;
   const watchId = useRef(null);
+  const [cardHeight, setCardHeight] = useState(0);
 
-  // Minta izin lokasi dan dapatkan posisi pengguna
+  // State untuk animasi loading di icon refresh
+  const [showPickupLoading, setShowPickupLoading] = useState(false);
+  const loadingRotation = useRef(new Animated.Value(0)).current;
+
+  // Setup animasi loading rotation untuk icon refresh
   useEffect(() => {
-    requestLocationPermission();
-    
+    if (showPickupLoading) {
+      Animated.loop(
+        Animated.timing(loadingRotation, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        })
+      ).start();
+    } else {
+      loadingRotation.stopAnimation();
+      loadingRotation.setValue(0);
+    }
+
     // Cleanup watch position ketika komponen unmount
     return () => {
       if (watchId.current !== null) {
         Geolocation.clearWatch(watchId.current);
       }
     };
-  }, []);
+  }, [showPickupLoading]);
+
+  // Interpolasi untuk animasi loading icon refresh
+  const loadingRotate = loadingRotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
 
   const requestLocationPermission = async () => {
     // Langsung coba dapatkan lokasi tanpa menunggu izin (akan fallback ke cached location)
@@ -96,6 +136,7 @@ const LocationSearchScreen = ({ navigation, route }) => {
   // Fungsi untuk mendapatkan lokasi cepat (menggunakan cache)
   const getCurrentLocation = () => {
     setIsGettingLocation(true);
+    setShowPickupLoading(true); // Tampilkan loading di icon refresh
     
     Geolocation.getCurrentPosition(
       (position) => {
@@ -106,7 +147,7 @@ const LocationSearchScreen = ({ navigation, route }) => {
         getAccurateLocation();
       },
       { 
-        timeout: 5000, // Timeout lebih pendek
+        timeout: 2000, // Timeout lebih pendek (2 detik)
         maximumAge: 300000, // Gunakan cached location hingga 5 menit
         enableHighAccuracy: false // Tidak perlu high accuracy untuk cepat
       }
@@ -121,6 +162,7 @@ const LocationSearchScreen = ({ navigation, route }) => {
       },
       (error) => {
         setIsGettingLocation(false);
+        setShowPickupLoading(false); // Sembunyikan loading di icon refresh
         // Tetap lanjutkan meskipun gagal dapatkan lokasi
         Alert.alert(
           'Info', 
@@ -129,7 +171,7 @@ const LocationSearchScreen = ({ navigation, route }) => {
       },
       { 
         enableHighAccuracy: true, 
-        timeout: 10000, 
+        timeout: 5000, // Timeout lebih pendek (5 detik)
         maximumAge: 0 
       }
     );
@@ -145,23 +187,52 @@ const LocationSearchScreen = ({ navigation, route }) => {
     };
     
     setSelectedLocation(myLocation);
-    const newRegion = { ...myLocation.coordinate, latitudeDelta: 0.02, longitudeDelta: 0.02 };
+    
+    // Zoom in ke lokasi dengan level zoom yang lebih dekat
+    const newRegion = { 
+      ...myLocation.coordinate, 
+      latitudeDelta: 0.005, // Lebih kecil untuk zoom in
+      longitudeDelta: 0.005 // Lebih kecil untuk zoom in
+    };
+    
     setRegion(newRegion);
     
     if (mapRef.current) {
-      mapRef.current.animateToRegion(newRegion, 1000);
+      // Animate to region dengan durasi lebih cepat untuk respons yang lebih baik
+      mapRef.current.animateToRegion(newRegion, 800);
     }
     
     // Dapatkan alamat di background tanpa menunggu
     fetchAddressFromCoords(myLocation.coordinate);
     setIsGettingLocation(false);
+    setShowPickupLoading(false); // Sembunyikan loading di icon refresh setelah berhasil
   };
+
+  // Fungsi untuk zoom in ke lokasi tertentu
+  const zoomToLocation = (coordinate, zoomLevel = 0.005) => {
+    const newRegion = {
+      ...coordinate,
+      latitudeDelta: zoomLevel,
+      longitudeDelta: zoomLevel
+    };
+    
+    setRegion(newRegion);
+    
+    if (mapRef.current) {
+      mapRef.current.animateToRegion(newRegion, 800);
+    }
+  };
+
+  useEffect(() => {
+    // Request permission lokasi saat komponen dimount
+    requestLocationPermission();
+  }, []);
 
   useEffect(() => {
     if (selectedLocation) {
       Animated.timing(slideAnim, { toValue: 0, duration: 300, useNativeDriver: true }).start();
     } else {
-      Animated.timing(slideAnim, { toValue: 300, duration: 300, useNativeDriver: true }).start();
+      Animated.timing(slideAnim, { toValue: BOTTOM_CARD_HEIGHT, duration: 300, useNativeDriver: true }).start();
     }
   }, [selectedLocation]);
   
@@ -201,8 +272,9 @@ const LocationSearchScreen = ({ navigation, route }) => {
           coordinate: { latitude: location.lat, longitude: location.lng },
         };
         setSelectedLocation(newLocation);
-        const newRegion = { ...newLocation.coordinate, latitudeDelta: 0.02, longitudeDelta: 0.02 };
-        mapRef.current?.animateToRegion(newRegion, 1000);
+        
+        // Zoom in ke lokasi yang dipilih dari prediksi
+        zoomToLocation(newLocation.coordinate, 0.005);
       }
     } catch (error) { console.error('Error fetching place details:', error); } finally { setIsLoading(false); }
   };
@@ -215,6 +287,10 @@ const LocationSearchScreen = ({ navigation, route }) => {
       coordinate: tappedCoordinate,
     };
     setSelectedLocation(placeholderLocation);
+    
+    // Zoom in ke lokasi yang di-tap
+    zoomToLocation(tappedCoordinate, 0.005);
+    
     fetchAddressFromCoords(tappedCoordinate);
   };
   
@@ -266,7 +342,22 @@ const LocationSearchScreen = ({ navigation, route }) => {
     }
   };
 
+  const getCardTitle = () => {
+    if (target === 'to') {
+      return 'Set lokasi tujuan';
+    }
+    return 'Set lokasi jemput';
+  };
+
   const predictionListTop = insets.top + SEARCH_BAR_HEIGHT + (SEARCH_BAR_PADDING * 2);
+
+  // Hitung posisi tombol current location agar tidak tertutup card
+  const getCurrentLocationButtonBottom = () => {
+    if (selectedLocation) {
+      return cardHeight + 20; // 20px di atas card
+    }
+    return 20; // 20px dari bawah layar
+  };
 
   return (
     <View style={styles.container}>
@@ -281,15 +372,7 @@ const LocationSearchScreen = ({ navigation, route }) => {
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
-        {isLoading && <ActivityIndicator style={styles.loader} color={COLORS.primary} />}
       </View>
-      
-      {isGettingLocation && (
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.loadingText}>Mendapatkan lokasi Anda...</Text>
-        </View>
-      )}
       
       <MapView
         ref={mapRef}
@@ -297,7 +380,6 @@ const LocationSearchScreen = ({ navigation, route }) => {
         provider={PROVIDER_GOOGLE}
         initialRegion={BATAM_REGION}
         region={region}
-        onRegionChangeComplete={setRegion}
         showsUserLocation={true}
         showsMyLocationButton={false}
         onPress={onMapPress}
@@ -317,6 +399,30 @@ const LocationSearchScreen = ({ navigation, route }) => {
         )}
       </MapView>
       
+      {/* Pickup Marker dengan animasi HANYA pada icon */}
+      <View style={styles.pickupMarkerContainer}>
+        <View style={styles.pickupMarker}>
+          {showPickupLoading ? (
+            <Animated.Image
+              source={require('../assets/icons/refresh.png')}
+              style={[
+                styles.refreshIconImage,
+                { transform: [{ rotate: loadingRotate }] }
+              ]}
+              resizeMode="contain"
+            />
+          ) : (
+            <Image
+              source={require('../assets/icons/arrow-small-up.png')}
+              style={styles.pickupIconImage}
+              resizeMode="contain"
+            />
+          )}
+        </View>
+        <View style={styles.pickupMarkerPin} />
+        <View style={styles.pickupMarkerBottomCircle} />
+      </View>
+      
       {predictions.length > 0 && (
         <FlatList
           data={predictions}
@@ -331,27 +437,64 @@ const LocationSearchScreen = ({ navigation, route }) => {
         />
       )}
       
-      <TouchableOpacity style={[styles.currentLocationButton, { bottom: insets.bottom + (selectedLocation ? 180 : 20) }]} onPress={goToMyLocation}>
-        <Image source={require('../assets/icons/my_location.png')} style={styles.iconImage} />
+      {/* Tombol Current Location dengan posisi yang diperbaiki */}
+      <TouchableOpacity 
+        style={[styles.currentLocationButton, { bottom: getCurrentLocationButtonBottom() }]} 
+        onPress={goToMyLocation}
+      >
+        <Image 
+          source={require('../assets/icons/my_location.png')} 
+          style={[styles.currentLocationIcon, { tintColor: COLORS.primary }]} 
+        />
       </TouchableOpacity>
       
-      <Animated.View style={[
-        styles.bottomCard, { paddingBottom: insets.bottom + 16, transform: [{ translateY: slideAnim }] }
-      ]}>
-        {selectedLocation && (
-          <>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle} numberOfLines={1}>{selectedLocation.name}</Text>
-              <TouchableOpacity onPress={hideDetailsCard} style={styles.closeButton}>
-                <Text style={styles.closeButtonText}>X</Text>
-              </TouchableOpacity>
+      {/* Back Card */}
+      <View style={[styles.backCard, { bottom: 10 + insets.bottom }]} />
+
+      {/* Bottom Card */}
+      <Animated.View 
+        style={[
+          styles.bottomCard, 
+          { 
+            paddingBottom: 20 + insets.bottom, 
+            transform: [{ translateY: slideAnim }] 
+          }
+        ]}
+        onLayout={(event) => {
+          const { height } = event.nativeEvent.layout;
+          setCardHeight(height);
+        }}
+      >
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>{getCardTitle()}</Text>
+          <TouchableOpacity onPress={hideDetailsCard}>
+            <Text style={styles.editButtonText}>Edit</Text>
+          </TouchableOpacity>
+        </View>
+        
+        {(isLoading || showPickupLoading) ? (
+          <SkeletonLoader />
+        ) : (
+          <View style={styles.locationInfoBox}>
+            <View style={styles.locationIcon}>
+              <Image 
+                source={require('../assets/icons/black-circle.png')} 
+                style={styles.locationIconImage} 
+                resizeMode="contain" 
+              />
             </View>
-            <Text style={styles.cardAddress} numberOfLines={2}>{selectedLocation.address}</Text>
-            <TouchableOpacity style={styles.selectButton} onPress={handleSelectLocation}>
-              <Text style={styles.selectButtonText}>Pilih Lokasi Ini</Text>
-            </TouchableOpacity>
-          </>
+            <View style={styles.locationTextContainer}>
+              <Text style={styles.locationTitle}>{selectedLocation?.name || 'Pilih lokasi'}</Text>
+              <Text style={styles.locationAddress} numberOfLines={2}>
+                {selectedLocation?.address || 'Geser peta untuk memilih lokasi'}
+              </Text>
+            </View>
+          </View>
         )}
+        
+        <TouchableOpacity style={styles.continueButton} onPress={handleSelectLocation}>
+          <Text style={styles.continueButtonText}>Pilih Lokasi Ini</Text>
+        </TouchableOpacity>
       </Animated.View>
     </View>
   );
@@ -393,24 +536,6 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     tintColor: COLORS.darkGray,
-  },
-  loader: {
-    position: 'absolute',
-    right: 32,
-    top: '50%',
-    marginTop: -10,
-  },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 10,
-  },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: COLORS.darkGray,
   },
   predictionsContainer: {
     position: 'absolute',
@@ -464,76 +589,188 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: 'white',
   },
-  bottomCard: {
+  
+  // Pickup Marker Styles - DIUBAH: Hanya icon yang beranimasi
+  pickupMarkerContainer: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 16,
-    elevation: 10,
-    shadowColor: COLORS.black,
-    shadowOffset: { width: 0, height: -3 },
+    top: '50%',
+    left: '50%',
+    transform: [{ translateX: -22 }, { translateY: -54 }],
+    alignItems: 'center',
+    zIndex: 100,
+  },
+  pickupMarker: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: COLORS.primary,
+    borderWidth: 4,
+    borderColor: '#FFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+  },
+  pickupIconImage: {
+    width: 34,
+    height: 34,
+    tintColor: '#FFF',
+  },
+  refreshIconImage: {
+    width: 24,
+    height: 24,
+    tintColor: '#FFF',
+  },
+  pickupMarkerPin: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 6,
+    borderRightWidth: 6,
+    borderTopWidth: 12,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderTopColor: '#FFF',
+    marginTop: -2,
+  },
+  pickupMarkerBottomCircle: {
+    width: 7,
+    height: 7,
+    borderRadius: 5,
+    backgroundColor: COLORS.primary,
+    marginTop: 1,
+  },
+  
+  // Back Card
+  backCard: {
+    position: 'absolute',
+    left: 10,
+    right: 10,
+    height: 60,
+    backgroundColor: '#F5F5F5',
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
-    zIndex: 10
+    shadowRadius: 5,
+    elevation: 3,
+    zIndex: 5,
+  },
+  
+  // Bottom Card
+  bottomCard: { 
+    position: 'absolute', 
+    bottom: 0, 
+    left: 0, 
+    right: 0, 
+    backgroundColor: COLORS.white, 
+    borderTopLeftRadius: 20, 
+    borderTopRightRadius: 20, 
+    padding: 20,
+    elevation: 10, 
+    zIndex: 10 
   },
   cardHeader: { 
     flexDirection: 'row', 
     justifyContent: 'space-between', 
     alignItems: 'center', 
-    marginBottom: 8 
+    marginBottom: 15 
   },
   cardTitle: { 
-    fontSize: 20, 
+    fontSize: 18, 
     fontWeight: 'bold', 
-    color: COLORS.black, 
+    color: COLORS.black 
+  },
+  editButtonText: { 
+    fontSize: 16, 
+    fontWeight: '600', 
+    color: COLORS.primary 
+  },
+  locationInfoBox: { 
+    backgroundColor: '#F0FFF8', 
+    borderRadius: 10, 
+    padding: 15, 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    marginBottom: 20, 
+    borderWidth: 1, 
+    borderColor: '#D6F5E9' 
+  },
+  locationIcon: { 
+    width: 32, 
+    height: 32, 
+    borderRadius: 16, 
+    backgroundColor: COLORS.primary, 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    marginRight: 15 
+  },
+  locationIconImage: { 
+    width: 10, 
+    height: 10, 
+    tintColor: COLORS.white 
+  },
+  locationTextContainer: { 
     flex: 1 
   },
-  closeButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    backgroundColor: COLORS.lightGray,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 10
-  },
-  closeButtonText: { 
+  locationTitle: { 
     fontSize: 16, 
     fontWeight: 'bold', 
+    color: COLORS.black 
+  },
+  locationAddress: { 
+    fontSize: 14, 
     color: COLORS.darkGray 
   },
-  cardAddress: { 
-    fontSize: 14, 
-    color: COLORS.darkGray, 
-    marginBottom: 16 
+  continueButton: { 
+    backgroundColor: COLORS.primary, 
+    borderRadius: 25, 
+    paddingVertical: 15, 
+    alignItems: 'center' 
   },
-  selectButton: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 14,
-    borderRadius: 25,
-    alignItems: 'center'
-  },
-  selectButtonText: { 
+  continueButtonText: { 
     color: COLORS.white, 
     fontSize: 16, 
     fontWeight: 'bold' 
   },
+  
+  // Skeleton Loader
+  skeletonTitle: {
+    height: 16,
+    width: '70%',
+    backgroundColor: COLORS.gray,
+    borderRadius: 4,
+    marginBottom: 8,
+  },
+  skeletonAddress: {
+    height: 14,
+    width: '90%',
+    backgroundColor: COLORS.gray,
+    borderRadius: 4,
+  },
+  
+  // Current Location Button - Diperbaiki
   currentLocationButton: {
     position: 'absolute',
     right: 20,
     backgroundColor: COLORS.white,
-    padding: 12,
-    borderRadius: 25,
-    elevation: 5,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 8,
     shadowColor: COLORS.black,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    zIndex: 10,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    zIndex: 15, // Z-index lebih tinggi dari card
+  },
+  currentLocationIcon: {
+    width: 24,
+    height: 24,
   },
 });
 
