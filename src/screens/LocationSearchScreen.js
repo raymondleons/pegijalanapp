@@ -19,7 +19,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import Geolocation from '@react-native-community/geolocation';
 
-// Diasumsikan ini adalah palet warna dari theme.js Anda
 const COLORS = {
     primary: '#0064d2',
     white: '#FFFFFF',
@@ -41,7 +40,7 @@ const BATAM_REGION = {
 const SEARCH_BAR_HEIGHT = 50;
 const SEARCH_BAR_PADDING = 16;
 const { width, height } = Dimensions.get('window');
-const BOTTOM_CARD_HEIGHT = 200; // Perkiraan tinggi card bawah
+const BOTTOM_CARD_HEIGHT = 200;
 
 const SkeletonLoader = () => (
   <View style={styles.locationInfoBox}>
@@ -60,7 +59,11 @@ const SkeletonLoader = () => (
 );
 
 const LocationSearchScreen = ({ navigation, route }) => {
-  const { onSelect, target } = route.params || {};
+  // PERBAIKAN: Handle case ketika route.params tidak ada dengan lebih aman
+  const params = route?.params || {};
+  const onSelect = params.onSelect || (() => {});
+  const target = params.target || 'to';
+  
   const insets = useSafeAreaInsets();
   const mapRef = useRef(null);
   const debounceTimeout = useRef(null);
@@ -78,153 +81,206 @@ const LocationSearchScreen = ({ navigation, route }) => {
   const [showPickupLoading, setShowPickupLoading] = useState(false);
   const loadingRotation = useRef(new Animated.Value(0)).current;
 
-  // Setup animasi loading rotation untuk icon refresh
+  // Cleanup effect yang lebih komprehensif
   useEffect(() => {
+    return () => {
+      // Bersihkan timeout
+      if (debounceTimeout.current) {
+        clearTimeout(debounceTimeout.current);
+      }
+      
+      // Bersihkan watch location
+      if (watchId.current !== null) {
+        Geolocation.clearWatch(watchId.current);
+      }
+      
+      // Hentikan semua animasi
+      slideAnim.stopAnimation();
+      loadingRotation.stopAnimation();
+    };
+  }, []);
+
+  // Setup animasi loading rotation
+  useEffect(() => {
+    let animation = null;
+    
     if (showPickupLoading) {
-      Animated.loop(
+      animation = Animated.loop(
         Animated.timing(loadingRotation, {
           toValue: 1,
           duration: 1000,
           useNativeDriver: true,
         })
-      ).start();
+      );
+      animation.start();
     } else {
       loadingRotation.stopAnimation();
       loadingRotation.setValue(0);
     }
-
-    // Cleanup watch position ketika komponen unmount
+    
     return () => {
-      if (watchId.current !== null) {
-        Geolocation.clearWatch(watchId.current);
+      if (animation) {
+        animation.stop();
       }
     };
   }, [showPickupLoading]);
 
-  // Interpolasi untuk animasi loading icon refresh
   const loadingRotate = loadingRotation.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   });
 
-  const requestLocationPermission = async () => {
-    // Langsung coba dapatkan lokasi tanpa menunggu izin (akan fallback ke cached location)
-    getCurrentLocation();
-    
-    if (Platform.OS === 'android') {
-      try {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          {
-            title: 'Izin Akses Lokasi',
-            message: 'Aplikasi memerlukan akses lokasi untuk menampilkan posisi Anda',
-            buttonNeutral: 'Tanya Nanti',
-            buttonNegative: 'Batal',
-            buttonPositive: 'Izinkan',
-          }
-        );
-        if (granted === PermissionsAndroid.RESULTS.GRANTED) {
-          // Jika izin diberikan, dapatkan lokasi yang lebih akurat
-          getAccurateLocation();
-        }
-      } catch (err) {
-        console.warn(err);
+  // PERBAIKAN: Handle navigation back dengan lebih aman
+  const handleGoBack = () => {
+    try {
+      // Hentikan semua animasi sebelum navigasi
+      slideAnim.stopAnimation();
+      loadingRotation.stopAnimation();
+      
+      // Bersihkan timeout
+      if (debounceTimeout.current) {
+        clearTimeout(debounceTimeout.current);
       }
+      
+      // Navigasi kembali
+      if (navigation && typeof navigation.goBack === 'function') {
+        navigation.goBack();
+      }
+    } catch (error) {
+      console.log('Error in handleGoBack:', error);
     }
   };
 
-  // Fungsi untuk mendapatkan lokasi cepat (menggunakan cache)
+  const requestLocationPermission = async () => {
+    try {
+      getCurrentLocation();
+      
+      if (Platform.OS === 'android') {
+        try {
+          const granted = await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+            {
+              title: 'Izin Akses Lokasi',
+              message: 'Aplikasi memerlukan akses lokasi untuk menampilkan posisi Anda',
+              buttonNeutral: 'Tanya Nanti',
+              buttonNegative: 'Batal',
+              buttonPositive: 'Izinkan',
+            }
+          );
+          if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+            getAccurateLocation();
+          }
+        } catch (err) {
+          console.warn('Permission error:', err);
+        }
+      }
+    } catch (error) {
+      console.log('Request location permission error:', error);
+    }
+  };
+
   const getCurrentLocation = () => {
     setIsGettingLocation(true);
-    setShowPickupLoading(true); // Tampilkan loading di icon refresh
+    setShowPickupLoading(true);
     
-    Geolocation.getCurrentPosition(
-      (position) => {
-        handleLocationSuccess(position);
-      },
-      (error) => {
-        // Jika gagal dengan cached location, coba dapatkan lokasi yang lebih akurat
-        getAccurateLocation();
-      },
-      { 
-        timeout: 2000, // Timeout lebih pendek (2 detik)
-        maximumAge: 300000, // Gunakan cached location hingga 5 menit
-        enableHighAccuracy: false // Tidak perlu high accuracy untuk cepat
-      }
-    );
-  };
-
-  // Fungsi untuk mendapatkan lokasi yang lebih akurat
-  const getAccurateLocation = () => {
-    Geolocation.getCurrentPosition(
-      (position) => {
-        handleLocationSuccess(position);
-      },
-      (error) => {
-        setIsGettingLocation(false);
-        setShowPickupLoading(false); // Sembunyikan loading di icon refresh
-        // Tetap lanjutkan meskipun gagal dapatkan lokasi
-        Alert.alert(
-          'Info', 
-          'Tidak dapat mendapatkan lokasi saat ini. Anda tetap dapat memilih lokasi secara manual.'
-        );
-      },
-      { 
-        enableHighAccuracy: true, 
-        timeout: 5000, // Timeout lebih pendek (5 detik)
-        maximumAge: 0 
-      }
-    );
-  };
-
-  // Handler untuk keberhasilan mendapatkan lokasi
-  const handleLocationSuccess = (position) => {
-    const { latitude, longitude } = position.coords;
-    const myLocation = {
-      name: 'Lokasi Saya',
-      address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
-      coordinate: { latitude, longitude },
-    };
-    
-    setSelectedLocation(myLocation);
-    
-    // Zoom in ke lokasi dengan level zoom yang lebih dekat
-    const newRegion = { 
-      ...myLocation.coordinate, 
-      latitudeDelta: 0.005, // Lebih kecil untuk zoom in
-      longitudeDelta: 0.005 // Lebih kecil untuk zoom in
-    };
-    
-    setRegion(newRegion);
-    
-    if (mapRef.current) {
-      // Animate to region dengan durasi lebih cepat untuk respons yang lebih baik
-      mapRef.current.animateToRegion(newRegion, 800);
+    try {
+      Geolocation.getCurrentPosition(
+        (position) => {
+          handleLocationSuccess(position);
+        },
+        (error) => {
+          setIsGettingLocation(false);
+          setShowPickupLoading(false);
+          console.log('Location error:', error);
+        },
+        { 
+          timeout: 2000,
+          maximumAge: 300000,
+          enableHighAccuracy: false
+        }
+      );
+    } catch (error) {
+      setIsGettingLocation(false);
+      setShowPickupLoading(false);
+      console.log('Geolocation error:', error);
     }
-    
-    // Dapatkan alamat di background tanpa menunggu
-    fetchAddressFromCoords(myLocation.coordinate);
-    setIsGettingLocation(false);
-    setShowPickupLoading(false); // Sembunyikan loading di icon refresh setelah berhasil
   };
 
-  // Fungsi untuk zoom in ke lokasi tertentu
+  const getAccurateLocation = () => {
+    try {
+      Geolocation.getCurrentPosition(
+        (position) => {
+          handleLocationSuccess(position);
+        },
+        (error) => {
+          setIsGettingLocation(false);
+          setShowPickupLoading(false);
+          console.log('Accurate location error:', error);
+        },
+        { 
+          enableHighAccuracy: true, 
+          timeout: 5000,
+          maximumAge: 0 
+        }
+      );
+    } catch (error) {
+      setIsGettingLocation(false);
+      setShowPickupLoading(false);
+      console.log('Accurate location catch error:', error);
+    }
+  };
+
+  const handleLocationSuccess = (position) => {
+    try {
+      const { latitude, longitude } = position.coords;
+      const myLocation = {
+        name: 'Lokasi Saya',
+        address: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
+        coordinate: { latitude, longitude },
+      };
+      
+      setSelectedLocation(myLocation);
+      
+      const newRegion = { 
+        ...myLocation.coordinate, 
+        latitudeDelta: 0.005,
+        longitudeDelta: 0.005
+      };
+      
+      setRegion(newRegion);
+      
+      if (mapRef.current && typeof mapRef.current.animateToRegion === 'function') {
+        mapRef.current.animateToRegion(newRegion, 800);
+      }
+      
+      fetchAddressFromCoords(myLocation.coordinate);
+    } catch (error) {
+      console.log('Location success error:', error);
+    } finally {
+      setIsGettingLocation(false);
+      setShowPickupLoading(false);
+    }
+  };
+
   const zoomToLocation = (coordinate, zoomLevel = 0.005) => {
-    const newRegion = {
-      ...coordinate,
-      latitudeDelta: zoomLevel,
-      longitudeDelta: zoomLevel
-    };
-    
-    setRegion(newRegion);
-    
-    if (mapRef.current) {
-      mapRef.current.animateToRegion(newRegion, 800);
+    try {
+      const newRegion = {
+        ...coordinate,
+        latitudeDelta: zoomLevel,
+        longitudeDelta: zoomLevel
+      };
+      
+      setRegion(newRegion);
+      
+      if (mapRef.current && typeof mapRef.current.animateToRegion === 'function') {
+        mapRef.current.animateToRegion(newRegion, 800);
+      }
+    } catch (error) {
+      console.log('Zoom to location error:', error);
     }
   };
 
   useEffect(() => {
-    // Request permission lokasi saat komponen dimount
     requestLocationPermission();
   }, []);
 
@@ -239,20 +295,40 @@ const LocationSearchScreen = ({ navigation, route }) => {
   const fetchAutocompletePredictions = async (query) => {
     if (query.length < 3) { setPredictions([]); return; }
     setIsLoading(true);
-    const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&key=${GOOGLE_MAPS_API_KEY}&components=country:ID&language=id`;
     try {
+      const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&key=${GOOGLE_MAPS_API_KEY}&components=country:ID&language=id`;
       const response = await fetch(url);
       const data = await response.json();
-      if (data.status === 'OK') { setPredictions(data.predictions); } else { setPredictions([]); }
-    } catch (error) { console.error('Error fetching autocomplete:', error); } finally { setIsLoading(false); }
+      if (data.status === 'OK') { 
+        setPredictions(data.predictions || []); // PERBAIKAN: Pastikan predictions ada
+      } else { 
+        setPredictions([]); 
+      }
+    } catch (error) { 
+      console.error('Error fetching autocomplete:', error);
+      setPredictions([]);
+    } finally { 
+      setIsLoading(false); 
+    }
   };
 
   useEffect(() => {
-    if (debounceTimeout.current) { clearTimeout(debounceTimeout.current); }
+    if (debounceTimeout.current) { 
+      clearTimeout(debounceTimeout.current); 
+    }
     debounceTimeout.current = setTimeout(() => {
-      if (searchQuery) { fetchAutocompletePredictions(searchQuery); } else { setPredictions([]); }
+      if (searchQuery) { 
+        fetchAutocompletePredictions(searchQuery); 
+      } else { 
+        setPredictions([]); 
+      }
     }, 500);
-    return () => clearTimeout(debounceTimeout.current);
+    
+    return () => {
+      if (debounceTimeout.current) {
+        clearTimeout(debounceTimeout.current);
+      }
+    };
   }, [searchQuery]);
 
   const onPredictionPress = async (placeId) => {
@@ -260,10 +336,12 @@ const LocationSearchScreen = ({ navigation, route }) => {
     setIsLoading(true);
     setSearchQuery('');
     setPredictions([]);
-    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${GOOGLE_MAPS_API_KEY}&fields=name,formatted_address,geometry&language=id`;
+    
     try {
+      const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&key=${GOOGLE_MAPS_API_KEY}&fields=name,formatted_address,geometry&language=id`;
       const response = await fetch(url);
       const data = await response.json();
+      
       if (data.status === 'OK') {
         const { location } = data.result.geometry;
         const newLocation = {
@@ -272,47 +350,42 @@ const LocationSearchScreen = ({ navigation, route }) => {
           coordinate: { latitude: location.lat, longitude: location.lng },
         };
         setSelectedLocation(newLocation);
-        
-        // Zoom in ke lokasi yang dipilih dari prediksi
         zoomToLocation(newLocation.coordinate, 0.005);
       }
-    } catch (error) { console.error('Error fetching place details:', error); } finally { setIsLoading(false); }
+    } catch (error) { 
+      console.error('Error fetching place details:', error); 
+    } finally { 
+      setIsLoading(false); 
+    }
   };
 
   const onMapPress = (event) => {
-    const tappedCoordinate = event.nativeEvent.coordinate;
-    const placeholderLocation = {
-      name: 'Lokasi Pilihan',
-      address: `${tappedCoordinate.latitude.toFixed(6)}, ${tappedCoordinate.longitude.toFixed(6)}`,
-      coordinate: tappedCoordinate,
-    };
-    setSelectedLocation(placeholderLocation);
-    
-    // Zoom in ke lokasi yang di-tap
-    zoomToLocation(tappedCoordinate, 0.005);
-    
-    fetchAddressFromCoords(tappedCoordinate);
+    try {
+      const tappedCoordinate = event.nativeEvent.coordinate;
+      const placeholderLocation = {
+        name: 'Lokasi Pilihan',
+        address: `${tappedCoordinate.latitude.toFixed(6)}, ${tappedCoordinate.longitude.toFixed(6)}`,
+        coordinate: tappedCoordinate,
+      };
+      setSelectedLocation(placeholderLocation);
+      zoomToLocation(tappedCoordinate, 0.005);
+      fetchAddressFromCoords(tappedCoordinate);
+    } catch (error) {
+      console.log('Map press error:', error);
+    }
   };
   
   const hideDetailsCard = () => {
     setSelectedLocation(null);
-  };
-  
-  const handleGoBack = () => {
-    if (navigation) {
-      navigation.goBack();
-    }
   };
 
   const goToMyLocation = () => {
     getCurrentLocation();
   };
 
-  // Fungsi yang diperbaiki untuk mendapatkan alamat dari koordinat
   const fetchAddressFromCoords = async ({ latitude, longitude }) => {
-    const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}&language=id`;
-    
     try {
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}&language=id`;
       const response = await fetch(url);
       const data = await response.json();
       
@@ -329,16 +402,24 @@ const LocationSearchScreen = ({ navigation, route }) => {
       }
     } catch (error) { 
       console.error("Error fetching address from coords:", error);
-      // Tetap gunakan koordinat jika gagal mendapatkan alamat
     }
   };
 
   const handleSelectLocation = () => {
-    if (selectedLocation && onSelect) {
-      onSelect(selectedLocation.address);
-      navigation.goBack();
-    } else if (selectedLocation) {
-      Alert.alert("Info", `Lokasi dipilih: ${selectedLocation.address}`);
+    try {
+      if (!selectedLocation) {
+        Alert.alert("Lokasi belum dipilih", "Silakan pilih lokasi terlebih dahulu.");
+        return;
+      }
+
+      if (typeof onSelect === 'function') {
+        onSelect(selectedLocation);
+      }
+      
+      handleGoBack(); // Gunakan fungsi handleGoBack yang sudah diperbaiki
+    } catch (error) {
+      console.error('Error in handleSelectLocation:', error);
+      Alert.alert("Error", "Terjadi kesalahan: " + error.message);
     }
   };
 
@@ -351,12 +432,11 @@ const LocationSearchScreen = ({ navigation, route }) => {
 
   const predictionListTop = insets.top + SEARCH_BAR_HEIGHT + (SEARCH_BAR_PADDING * 2);
 
-  // Hitung posisi tombol current location agar tidak tertutup card
   const getCurrentLocationButtonBottom = () => {
     if (selectedLocation) {
-      return cardHeight + 20; // 20px di atas card
+      return cardHeight + 20;
     }
-    return 20; // 20px dari bawah layar
+    return 20;
   };
 
   return (
@@ -399,7 +479,6 @@ const LocationSearchScreen = ({ navigation, route }) => {
         )}
       </MapView>
       
-      {/* Pickup Marker dengan animasi HANYA pada icon */}
       <View style={styles.pickupMarkerContainer}>
         <View style={styles.pickupMarker}>
           {showPickupLoading ? (
@@ -437,7 +516,6 @@ const LocationSearchScreen = ({ navigation, route }) => {
         />
       )}
       
-      {/* Tombol Current Location dengan posisi yang diperbaiki */}
       <TouchableOpacity 
         style={[styles.currentLocationButton, { bottom: getCurrentLocationButtonBottom() }]} 
         onPress={goToMyLocation}
@@ -448,10 +526,8 @@ const LocationSearchScreen = ({ navigation, route }) => {
         />
       </TouchableOpacity>
       
-      {/* Back Card */}
       <View style={[styles.backCard, { bottom: 10 + insets.bottom }]} />
 
-      {/* Bottom Card */}
       <Animated.View 
         style={[
           styles.bottomCard, 
@@ -500,6 +576,7 @@ const LocationSearchScreen = ({ navigation, route }) => {
   );
 };
 
+// Styles tetap sama seperti sebelumnya
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
@@ -589,8 +666,6 @@ const styles = StyleSheet.create({
     borderRadius: 5,
     backgroundColor: 'white',
   },
-  
-  // Pickup Marker Styles - DIUBAH: Hanya icon yang beranimasi
   pickupMarkerContainer: {
     position: 'absolute',
     top: '50%',
@@ -642,8 +717,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
     marginTop: 1,
   },
-  
-  // Back Card
   backCard: {
     position: 'absolute',
     left: 10,
@@ -658,8 +731,6 @@ const styles = StyleSheet.create({
     elevation: 3,
     zIndex: 5,
   },
-  
-  // Bottom Card
   bottomCard: { 
     position: 'absolute', 
     bottom: 0, 
@@ -735,8 +806,6 @@ const styles = StyleSheet.create({
     fontSize: 16, 
     fontWeight: 'bold' 
   },
-  
-  // Skeleton Loader
   skeletonTitle: {
     height: 16,
     width: '70%',
@@ -750,8 +819,6 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.gray,
     borderRadius: 4,
   },
-  
-  // Current Location Button - Diperbaiki
   currentLocationButton: {
     position: 'absolute',
     right: 20,
@@ -766,7 +833,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.3,
     shadowRadius: 5,
-    zIndex: 15, // Z-index lebih tinggi dari card
+    zIndex: 15,
   },
   currentLocationIcon: {
     width: 24,
